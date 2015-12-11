@@ -5,7 +5,7 @@ from cyclope.models import SiteSettings
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
-    Requires the options server, database, user and passphrase.
+    Requires the options server, database and user, passphrase is optional.
     Optional WordPress table prefix option, defaults to 'wp_'."""
 
     #NOTE django > 1.8 uses argparse instead of optparse module, 
