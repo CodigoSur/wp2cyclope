@@ -44,15 +44,22 @@ class Command(BaseCommand) :
         ),
     )
 
+    # class constant
+    wp_prefix = 'wp_'
+
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
         #connect to wordpress mysql database
         cnx = self._mysql_connection(options['server'], options['db'], options['user'], options['password'])
+        self.wp_prefix = options['wp_prefix']
+        
         #TODO clean cyclope sqlite database
         
         # SiteSettings <- wp_options
         # https://codex.wordpress.org/Option_Reference
-        wp_options = self._fetch_wp_options(cnx, options['wp_prefix'], 'siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify')
+        wp_options = ('siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify')
+        #TODO comment_registration, users_can_register, blog_public
+        wp_options = self._fetch_wp_options(cnx, wp_options)
         settings = SiteSettings.objects.all()[0]
         settings.global_title = wp_options['blogname']
         settings.description = wp_options['blogdescription']
@@ -60,12 +67,13 @@ class Command(BaseCommand) :
         settings.allow_comments = u'YES' if wp_options['default_comment_status']=='open' else u'NO'
         settings.moderate_comments = wp_options['comment_moderation']==1 #default False
         settings.enable_comments_notifications = wp_options['comments_notify'] in ('', 1) #default True
-        #TODO comment_registration, users_can_register, blog_public 
         site = settings.site
         site.name = wp_options['blogname']
         site.domain = wp_options['siteurl']
-        #site.save()
-        #settings.save()
+        site.save()
+        settings.save()
+        
+        #close mysql connection
         cnx.close()
 
     def _mysql_connection(self, host, database, user, password):
@@ -90,14 +98,11 @@ class Command(BaseCommand) :
         else:
             return cnx
 
-    def _fetch_wp_options(self, mysql_cnx, wp_prefix, *options):
-        """Execute single queries to WP _options table for the given option names."""
-        wp_options={}
-        query = ("SELECT option_value FROM "+wp_prefix+"options WHERE option_name=%s")
-        for option in options :
-            cursor = mysql_cnx.cursor()
-            cursor.execute(query, (option,))
-            result = cursor.fetchone()
-            wp_options[option]=result[0]
-            cursor.close()
-        return wp_options
+    def _fetch_wp_options(self, mysql_cnx, options):
+        """Execute single query to WP _options table to retrieve the given option names."""
+        query = "SELECT option_name, option_value FROM "+self.wp_prefix+"options WHERE option_name IN {}".format(options)
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        results = dict(cursor.fetchall())
+        cursor.close()
+        return results
