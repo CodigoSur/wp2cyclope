@@ -4,6 +4,7 @@ import mysql.connector
 from cyclope.models import SiteSettings
 import re
 from cyclope.apps.articles.models import Article
+from django.contrib.sites.models import Site
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -52,30 +53,31 @@ class Command(BaseCommand) :
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
         #TODO use transactions
+        self.wp_prefix = options['wp_prefix']
+        #clear cyclope sqlite database
+        self._clear_cyclope_db()
         #connect to wordpress mysql database
         cnx = self._mysql_connection(options['server'], options['db'], options['user'], options['password'])
-        self.wp_prefix = options['wp_prefix']
-        
-        #TODO clean cyclope sqlite database
         
         # SiteSettings <- wp_options
         # https://codex.wordpress.org/Option_Reference
         wp_options = ('siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify')
         #TODO comment_registration, users_can_register, blog_public
         wp_options = self._fetch_wp_options(cnx, wp_options)
-        settings = SiteSettings.objects.all()[0]
+        settings = SiteSettings()
         settings.global_title = wp_options['blogname']
         settings.description = wp_options['blogdescription']
         #NOTE settings.keywords = WP doesn't use meta tags, only as a plugin
         settings.allow_comments = u'YES' if wp_options['default_comment_status']=='open' else u'NO'
         settings.moderate_comments = wp_options['comment_moderation']==1 #default False
         settings.enable_comments_notifications = wp_options['comments_notify'] in ('', 1) #default True
-        site = settings.site
+        site = Site()
         site.name = wp_options['blogname']
-        site.domain = wp_options['siteurl']
+        site.domain = wp_options['siteurl'] 
         site.save()
+        settings.site = site
         settings.save()
-
+        
         # Article <- wp_posts
         wp_post_fields = ('post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
         wp_posts = self._fetch_wp_posts(cnx, wp_post_fields)
@@ -118,7 +120,7 @@ class Command(BaseCommand) :
         cursor.close()
         return results
 
-    #NOTE although this function uses the DB cursor, loading all posts to RAM could be heavyweight
+    #TODO although this function uses the DB cursor, loading all posts to RAM could be heavyweight
     def _fetch_wp_posts(self, mysql_cnx, fields):
         """Queries the given fields to WP posts table selecting only posts, not pages nor attachments,
            Returns them in a list of dictionnaries."""
@@ -154,4 +156,9 @@ class Command(BaseCommand) :
             #   author
             #   source
         )
+
+    def _clear_cyclope_db(self):
+        SiteSettings.objects.all().delete()
+        Site.objects.all().delete()
+        Article.objects.all().delete()
 
