@@ -2,6 +2,8 @@ from django.core.management.base import BaseCommand, CommandError
 from optparse import make_option
 import mysql.connector
 from cyclope.models import SiteSettings
+import re
+from cyclope.apps.articles.models import Article
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -49,6 +51,7 @@ class Command(BaseCommand) :
 
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
+        #TODO use transactions
         #connect to wordpress mysql database
         cnx = self._mysql_connection(options['server'], options['db'], options['user'], options['password'])
         self.wp_prefix = options['wp_prefix']
@@ -72,7 +75,15 @@ class Command(BaseCommand) :
         site.domain = wp_options['siteurl']
         site.save()
         settings.save()
-        
+
+        # Article <- wp_posts
+        wp_post_fields = ('post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
+        wp_posts = self._fetch_wp_posts(cnx, wp_post_fields)
+        articles = map(self._post_2_article, wp_posts)
+        #cannot create in bulk because of auto slug
+        for article in articles:
+            article.save()
+
         #close mysql connection
         cnx.close()
 
@@ -106,3 +117,41 @@ class Command(BaseCommand) :
         results = dict(cursor.fetchall())
         cursor.close()
         return results
+
+    #NOTE although this function uses the DB cursor, loading all posts to RAM could be heavyweight
+    def _fetch_wp_posts(self, mysql_cnx, fields):
+        """Queries the given fields to WP posts table selecting only posts, not pages nor attachments,
+           Returns them in a list of dictionnaries."""
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='post'"
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        results = []
+        for result in cursor :
+            results.append(dict(zip(fields, result)))
+        cursor.close()
+        return results
+
+    def _post_2_article(self, post):
+        """Instances an Article object from a WP post hash."""
+        return Article(
+            name = post['post_title'],
+            #post_name is AutoSlug
+            text = post['post_content'],
+            #date = post['post_date'], redundant
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            published = post['post_status']=='publish',#private and draft are unpublished
+            allow_comments = post['comment_status']=='open',#all posts have a status, none imported default to SITE
+            summary = post['post_excerpt']
+            #pretitle has no equivalent in WP
+            #TODO 
+            #show_author=always user
+            #FKs:
+            #   user
+            #   comments
+            #   related_contents
+            #   picture
+            #   author
+            #   source
+        )
+
