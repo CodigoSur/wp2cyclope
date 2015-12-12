@@ -108,8 +108,8 @@ class Command(BaseCommand) :
             return cnx
 
     def _clear_cyclope_db(self):
-        SiteSettings.objects.all().delete()
-        Site.objects.all().delete()
+        #SiteSettings.objects.all().delete()
+        #Site.objects.all().delete()
         Article.objects.all().delete()
         StaticPage.objects.all().delete()
 
@@ -123,17 +123,21 @@ class Command(BaseCommand) :
         cursor.execute(query)
         wp_options = dict(cursor.fetchall())
         cursor.close()
+        #TODO clearing settings erases default layout & breaks
+        #->   check wether settings were cleaned or not
+        #settings = SiteSettings()
+        settings = SiteSettings.objects.all()[0]
+        #site = Site()
+        site = settings.site
         #
-        settings = SiteSettings()
         settings.global_title = wp_options['blogname']
         settings.description = wp_options['blogdescription']
         #NOTE settings.keywords = WP doesn't use meta tags, only as a plugin
         settings.allow_comments = u'YES' if wp_options['default_comment_status']=='open' else u'NO'
         settings.moderate_comments = wp_options['comment_moderation']==1 #default False
         settings.enable_comments_notifications = wp_options['comments_notify'] in ('', 1) #default True
-        site = Site()
         site.name = wp_options['blogname']
-        site.domain = wp_options['siteurl'] 
+        site.domain = wp_options['siteurl']#TODO strip http:// 
         site.save()
         settings.site = site
         settings.save()
