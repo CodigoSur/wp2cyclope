@@ -52,7 +52,6 @@ class Command(BaseCommand) :
 
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
-        #TODO use transactions
         self.wp_prefix = options['wp_prefix']
         #clear cyclope sqlite database
         self._clear_cyclope_db()
@@ -127,6 +126,7 @@ class Command(BaseCommand) :
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='post'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
+        #return cursor
         results = []
         for result in cursor :
             results.append(dict(zip(fields, result)))
@@ -139,7 +139,7 @@ class Command(BaseCommand) :
             name = post['post_title'],
             #post_name is AutoSlug
             text = post['post_content'],
-            #date = post['post_date'], redundant
+            date = post['post_date'], #redundant
             creation_date = post['post_date'],
             modification_date = post['post_modified'],
             published = post['post_status']=='publish',#private and draft are unpublished
