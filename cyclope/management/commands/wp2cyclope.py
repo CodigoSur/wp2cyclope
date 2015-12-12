@@ -5,6 +5,7 @@ from cyclope.models import SiteSettings
 import re
 from cyclope.apps.articles.models import Article
 from django.contrib.sites.models import Site
+from django.db import transaction
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -125,11 +126,14 @@ class Command(BaseCommand) :
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='post'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
+        #single transaction for all articles
+        transaction.enter_transaction_management()
+        transaction.managed(True)
         for wp_post in cursor :
-            #TODO TRANSACT
             article = self._post_2_article(dict(zip(fields, wp_post)))
             article.save() 
-            #COMMIT
+        transaction.commit()
+        transaction.leave_transaction_management()
         counts = (Article.objects.count(), cursor.rowcount)
         cursor.close()
         return counts 
