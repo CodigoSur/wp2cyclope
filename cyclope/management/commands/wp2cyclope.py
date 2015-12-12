@@ -79,11 +79,10 @@ class Command(BaseCommand) :
         
         # Article <- wp_posts
         wp_post_fields = ('post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
-        wp_posts = self._fetch_wp_posts(cnx, wp_post_fields)
-        articles = map(self._post_2_article, wp_posts)
-        #cannot create in bulk because of auto slug
-        for article in articles:
-            article.save()
+        wp_posts_count = self._fetch_wp_posts(cnx, wp_post_fields)
+        
+        # StaticPage <- wp_posts
+        # TODO <-- ! 
 
         #close mysql connection
         cnx.close()
@@ -119,19 +118,21 @@ class Command(BaseCommand) :
         cursor.close()
         return results
 
-    #TODO although this function uses the DB cursor, loading all posts to RAM could be heavyweight
     def _fetch_wp_posts(self, mysql_cnx, fields):
         """Queries the given fields to WP posts table selecting only posts, not pages nor attachments,
-           Returns them in a list of dictionnaries."""
+           It parses data as key-value pairs to instance rows as Articles and save them.
+           Returns the number of created Articles and of fetched rows in a tuple."""
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='post'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
-        #return cursor
-        results = []
-        for result in cursor :
-            results.append(dict(zip(fields, result)))
+        for wp_post in cursor :
+            #TODO TRANSACT
+            article = self._post_2_article(dict(zip(fields, wp_post)))
+            article.save() 
+            #COMMIT
+        counts = (Article.objects.count(), cursor.rowcount)
         cursor.close()
-        return results
+        return counts 
 
     def _post_2_article(self, post):
         """Instances an Article object from a WP post hash."""
