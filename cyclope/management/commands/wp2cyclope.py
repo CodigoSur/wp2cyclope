@@ -7,6 +7,8 @@ from cyclope.apps.articles.models import Article
 from django.contrib.sites.models import Site
 from django.db import transaction
 from cyclope.apps.staticpages.models import StaticPage
+from django.contrib.contenttypes.models import ContentType
+from cyclope.apps.custom_comments.models import CustomComment
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -80,7 +82,7 @@ class Command(BaseCommand) :
         print "-> migrated {} static pages out of {} posts".format(pages_count, wp_posts_p_count)    
 
         # Comments <- wp_comments
-        self._fetch_comments(cnx)
+        self._fetch_comments(cnx, settings.site)
 
         #...
         #close mysql connection
@@ -111,6 +113,7 @@ class Command(BaseCommand) :
             return cnx
 
     def _clear_cyclope_db(self):
+        #TODO clearing settings erases default layout & breaks
         #SiteSettings.objects.all().delete()
         #Site.objects.all().delete()
         Article.objects.all().delete()
@@ -126,8 +129,7 @@ class Command(BaseCommand) :
         cursor.execute(query)
         wp_options = dict(cursor.fetchall())
         cursor.close()
-        #TODO clearing settings erases default layout & breaks
-        #->   check wether settings were cleaned or not
+        #see _clear_cyclope_db TODO
         #settings = SiteSettings()
         settings = SiteSettings.objects.all()[0]
         #site = Site()
@@ -150,7 +152,7 @@ class Command(BaseCommand) :
         """Queries the given fields to WP posts table selecting only posts, not pages nor attachments nor revisions,
            It parses data as key-value pairs to instance rows as Articles and save them.
            Returns the number of created Articles and of fetched rows in a tuple."""
-        fields = ('post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
+        fields = ('ID', 'post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='post'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -168,7 +170,7 @@ class Command(BaseCommand) :
 
     def _fetch_pages(self, mysql_cnx):
         """Queries to WP posts table selecting only pages, not posts nor attachments nor revisions."""
-        fields = ('post_title','post_status','post_date', 'post_modified',  'comment_status', 'post_content', 'post_excerpt')
+        fields = ('ID', 'post_title','post_status','post_date', 'post_modified',  'comment_status', 'post_content', 'post_excerpt')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='page'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -184,20 +186,57 @@ class Command(BaseCommand) :
         cursor.close()
         return counts 
 
-    def _feth_comments(self, mysql_cnx):
-        """Populates cyclope custom comments from WP table wp_comments."""
-        fields = ('user_id', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent')
-        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam'" # don't bring spam
+    def _fetch_comments(self, mysql_cnx, site):
+        """Populates cyclope custom comments from WP table wp_comments.
+           Instead of querying the related object for each comment and atomizing transactions, which could be expensive,
+           We use an additional query for each content type only (just 2) and the transaction is repeated just as many times.
+           So we receive content_type and posts IDs, as well as Site ID which is already above in the script."""
+        fields = ('comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
+        post_types_with_comments = ('post', 'page')#TODO attachments
+        for post_type in post_types_with_comments:
+            post_ids = self._post_type_ids(mysql_cnx, post_type)
+            content_type_id = self._post_content_type_id(post_type)
+            query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam' AND comment_post_ID IN {}".format(post_ids)
+            cursor = mysql_cnx.cursor()
+            cursor.execute(query)
+            #single transaction per content_type
+            transaction.enter_transaction_management()
+            transaction.managed(True)
+            for wp_comment in cursor:
+                comment_hash = dict(zip(fields,wp_comment))
+                comment = self._wp_comment_to_custom(comment_hash, site, content_type_id)
+                comment.save()
+            transaction.commit()
+            transaction.leave_transaction_management()
+            cursor.close()
+
+    def _post_type_ids(self, mysql_cnx, post_type):
+        """Returns the IDs of wp_posts of the given type.
+           Type can be 'post', 'page' or 'attachment'."""
+        query = "SELECT ID FROM "+self.wp_prefix+"posts WHERE post_type='{}';".format(post_type)
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
-        import pdb; pdb.set_trace()
-        #comments = map(self._wp_comment_to_custom, dict(zip(fields, )))
+        post_ids = cursor.fetchall()
+        cursor.close()
+        def _flat_result(row): return row[0]
+        post_ids = tuple(map(_flat_result, post_ids))
+        return post_ids
 
+    def _post_content_type_id(self, post_type):
+        if post_type == 'post':
+            return ContentType.objects.get(app_label="articles", model="article")
+        elif post_type == 'page':
+            return ContentType.objects.get(app_label="staticpages", model="staticpage")
+        #TODO elif post_type == 'attachment'
+        else:
+            raise "Unexistent post type!"
+        
     #TODO 15+ Failed to populate slug Article.slug from name
     #TODO PRESERVE PERMALINKS
     def _post_to_article(self, post):
         """Instances an Article object from a WP post hash."""
         return Article(
+            id = post['ID'],
             name = post['post_title'],
             #post_name is AutoSlug 
             text = post['post_content'],
@@ -216,6 +255,7 @@ class Command(BaseCommand) :
 
     def _post_to_static_page(self, post):
         return StaticPage(
+            id = post['ID'],
             name = post['post_title'],
             text = post['post_content'],
             creation_date = post['post_date'],
@@ -226,21 +266,20 @@ class Command(BaseCommand) :
             #TODO user related_contents comments show_author
         )
 
-    def _wp_comment_to_custom(self, comment):
+    def _wp_comment_to_custom(self, comment, site, content_type):
         return CustomComment(
-            #COMMENT
-            #TODO RELATION      comment_post_ID
-            #content_type       ..
-            #object_pk          ..
-            #content_object     ..
-            #site               #FK
-            #user               user_id #FK/None
-            user_name = comment['comment_author']
-            user_email = comment['comment_author_email']
-            user_url = comment['comment_author_url']
-            comment = comment['comment_content']
-            submit_date = comment['comment_date']
-            ip_address = comment['comment_author_IP']
+            object_pk = comment['comment_post_ID'],
+            content_type = content_type,
+            #together they make content_object
+            site = site,
+            #user               user_id #FK/None TODO
+            user_name = comment['comment_author'],
+            user_email = comment['comment_author_email'],
+            user_url = comment['comment_author_url'],
+            comment = comment['comment_content'],
+            submit_date = comment['comment_date'],
+            ip_address = comment['comment_author_IP'],
+            #TODO
             #is_public          comment_approved
             #is_removed         ..
             #TODO THREADED
