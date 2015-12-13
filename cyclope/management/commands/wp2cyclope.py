@@ -188,14 +188,14 @@ class Command(BaseCommand) :
 
     def _fetch_comments(self, mysql_cnx, site):
         """Populates cyclope custom comments from WP table wp_comments.
-           Instead of querying the related object for each comment and atomizing transactions, which could be expensive,
-           We use an additional query for each content type only (just 2) and the transaction is repeated just as many times.
-           So we receive content_type and posts IDs, as well as Site ID which is already above in the script."""
+           instead of querying the related object for each comment and atomizing transactions, which could be expensive,
+           we use an additional query for each content type only, and the transaction is repeated just as many times.
+           we receive Site ID which is already above in the script."""
         fields = ('comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
         post_types_with_comments = ('post', 'page')#TODO attachments
         for post_type in post_types_with_comments:
             post_ids = self._post_type_ids(mysql_cnx, post_type)
-            content_type_id = self._post_content_type_id(post_type)
+            content_type = self._post_content_type(post_type)
             query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam' AND comment_post_ID IN {}".format(post_ids)
             cursor = mysql_cnx.cursor()
             cursor.execute(query)
@@ -204,7 +204,7 @@ class Command(BaseCommand) :
             transaction.managed(True)
             for wp_comment in cursor:
                 comment_hash = dict(zip(fields,wp_comment))
-                comment = self._wp_comment_to_custom(comment_hash, site, content_type_id)
+                comment = self._wp_comment_to_custom(comment_hash, site, content_type)
                 comment.save()
             transaction.commit()
             transaction.leave_transaction_management()
@@ -222,7 +222,7 @@ class Command(BaseCommand) :
         post_ids = tuple(map(_flat_result, post_ids))
         return post_ids
 
-    def _post_content_type_id(self, post_type):
+    def _post_content_type(self, post_type):
         if post_type == 'post':
             return ContentType.objects.get(app_label="articles", model="article")
         elif post_type == 'page':
