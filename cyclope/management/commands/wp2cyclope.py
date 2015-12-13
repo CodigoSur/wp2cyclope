@@ -71,13 +71,16 @@ class Command(BaseCommand) :
         settings = self._fetch_site_settings(cnx)
         print "-> nice to meet you, "+settings.site.name
         
-        # Article <- wp_posts
+        # Articles <- wp_posts
         wp_posts_a_count, articles_count = self._fetch_articles(cnx)
         print "-> migrated {} articles out of {} posts".format(articles_count, wp_posts_a_count)
 
-        # StaticPage <- wp_posts
+        # StaticPages <- wp_posts
         wp_posts_p_count, pages_count = self._fetch_pages(cnx)
         print "-> migrated {} static pages out of {} posts".format(pages_count, wp_posts_p_count)    
+
+        # Comments <- wp_comments
+        self._fetch_comments(cnx)
 
         #...
         #close mysql connection
@@ -181,13 +184,22 @@ class Command(BaseCommand) :
         cursor.close()
         return counts 
 
+    def _feth_comments(self, mysql_cnx):
+        """Populates cyclope custom comments from WP table wp_comments."""
+        fields = ('user_id', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent')
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam'" # don't bring spam
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        import pdb; pdb.set_trace()
+        #comments = map(self._wp_comment_to_custom, dict(zip(fields, )))
 
     #TODO 15+ Failed to populate slug Article.slug from name
+    #TODO PRESERVE PERMALINKS
     def _post_to_article(self, post):
         """Instances an Article object from a WP post hash."""
         return Article(
             name = post['post_title'],
-            #post_name is AutoSlug
+            #post_name is AutoSlug 
             text = post['post_content'],
             date = post['post_date'], #redundant
             creation_date = post['post_date'],
@@ -214,3 +226,28 @@ class Command(BaseCommand) :
             #TODO user related_contents comments show_author
         )
 
+    def _wp_comment_to_custom(self, comment):
+        return CustomComment(
+            #COMMENT
+            #TODO RELATION      comment_post_ID
+            #content_type       ..
+            #object_pk          ..
+            #content_object     ..
+            #site               #FK
+            #user               user_id #FK/None
+            user_name = comment['comment_author']
+            user_email = comment['comment_author_email']
+            user_url = comment['comment_author_url']
+            comment = comment['comment_content']
+            submit_date = comment['comment_date']
+            ip_address = comment['comment_author_IP']
+            #is_public          comment_approved
+            #is_removed         ..
+            #TODO THREADED
+            #title              x
+            #parent             comment_parent
+            #last_child         
+            #tree_path          
+            #CUSTOM
+            subscribe = True #TODO Site default?
+        )
