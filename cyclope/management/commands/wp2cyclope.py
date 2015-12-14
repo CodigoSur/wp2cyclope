@@ -163,7 +163,7 @@ class Command(BaseCommand) :
         """Queries the given fields to WP posts table selecting only posts, not pages nor attachments nor revisions,
            It parses data as key-value pairs to instance rows as Articles and save them.
            Returns the number of created Articles and of fetched rows in a tuple."""
-        fields = ('ID', 'post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
+        fields = ('ID', 'post_title', 'post_status', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt', 'post_author')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='post'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -181,7 +181,7 @@ class Command(BaseCommand) :
 
     def _fetch_pages(self, mysql_cnx):
         """Queries to WP posts table selecting only pages, not posts nor attachments nor revisions."""
-        fields = ('ID', 'post_title','post_status','post_date', 'post_modified',  'comment_status', 'post_content', 'post_excerpt')
+        fields = ('ID', 'post_title','post_status','post_date', 'post_modified',  'comment_status', 'post_content', 'post_excerpt', 'post_author')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='page'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -281,11 +281,11 @@ class Command(BaseCommand) :
             #if the user then tries to close them all, he shouldn't set them one by one.
             #whe should set them to SITE default unless comments are explicitly closed, which is the minority(?)       
             allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',
-            summary = post['post_excerpt']
+            summary = post['post_excerpt'],
             #pretitle has no equivalent in WP
-            #TODO show_author=always user
             #TODO #FKs: comments related_contents picture author source
-            #TODO user = post['user_id'] ??? <-------------------
+            user_id = post['post_author'] # WP referential integrity maintained
+            #TODO show_author=always user
         )
 
     def _post_to_static_page(self, post):
@@ -297,10 +297,10 @@ class Command(BaseCommand) :
             modification_date = post['post_modified'],
             published = post['post_status']=='publish',#private and draft are unpublished
             allow_comments = post['comment_status']=='open',#TODO see article's allow_comments
-            summary = post['post_excerpt']
+            summary = post['post_excerpt'],
             #TODO related_contents comments
+            user_id = post['post_author'] # WP referential integrity maintained
             #TODO show_author=always user
-            #TODO user = post['user_id'] ??? <-------------------
         )
 
     def _wp_comment_to_custom(self, comment, site, content_type):
@@ -311,13 +311,14 @@ class Command(BaseCommand) :
             object_pk = comment['comment_post_ID'],
             content_type = content_type,
             site = site,
-            #TODO user = comment['user_id'] ??? <-------------------
             user_name = comment['comment_author'],
             user_email = comment['comment_author_email'],
             user_url = comment['comment_author_url'],
             comment = comment['comment_content'],
             submit_date = comment['comment_date'],
             ip_address = comment['comment_author_IP'],
+            ## WP referential integrity maintained, check why N's comments aren't all referenced
+            user_id = comment['user_id'] if comment['user_id']!=0 else None,
             #TODO
             #is_public          comment_approved
             #is_removed         ..
@@ -330,16 +331,15 @@ class Command(BaseCommand) :
         return User(
             id =  wp_user['ID'],
             username = wp_user['user_login'],
-            #TODO parse fistname and lastname from user_nicename or display_name
             first_name = wp_user['display_name'],
-            #last_name=wp_user['display_name'] 
-            #user_url is lost...
+            #last_name=wp_user['user_nicename'], or parse display_name 
+            #WP user_url will be lost
             email = wp_user['user_email'],
-            #password='',#TODO reset or set_password=decrypt_wp(); save()
+            #password='',#TODO reset
             is_staff=True,
             #user_status is a dead column in WP
             is_active=True,
             is_superuser=True,#else doesn't have any permissions
-            #last_login='', we don't have this data
+            #last_login='', we don't have this data in WP?
             date_joined = wp_user['user_registered']
         )
