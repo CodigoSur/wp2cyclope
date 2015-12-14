@@ -9,6 +9,7 @@ from django.db import transaction
 from cyclope.apps.staticpages.models import StaticPage
 from django.contrib.contenttypes.models import ContentType
 from cyclope.apps.custom_comments.models import CustomComment
+from django.contrib.auth.models import User
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -73,6 +74,10 @@ class Command(BaseCommand) :
         settings = self._fetch_site_settings(cnx)
         print "-> nice to meet you, "+settings.site.name
         
+        # Users <- wp_users
+        users_count, wp_users_count = self._fetch_users(cnx)
+        print "-> migrated {}/{} users".format(users_count, wp_users_count)
+
         # Articles <- wp_posts
         wp_posts_a_count, articles_count = self._fetch_articles(cnx)
         print "-> migrated {} articles out of {} posts".format(articles_count, wp_posts_a_count)
@@ -120,6 +125,10 @@ class Command(BaseCommand) :
         Article.objects.all().delete()
         StaticPage.objects.all().delete()
         CustomComment.objects.all().delete()
+        User.objects.all().delete()
+
+    ########
+    #QUERIES
 
     def _fetch_site_settings(self, mysql_cnx):
         """Execute single query to WP _options table to retrieve the given option names."""
@@ -215,6 +224,22 @@ class Command(BaseCommand) :
             cursor.close()
         return counter
 
+    def _fetch_users(self, mysql_cnx):
+        """Populates cyclope django-based auth users from WP table wp_users."""
+        fields = ('ID', 'user_login', 'user_nicename', 'display_name', 'user_email', 'user_registered')
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"users"
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        wp_users = cursor.fetchall()
+        def _hash_result(fields, user): return dict(zip(fields,user))
+        users = map(_hash_result,[fields]*len(wp_users), wp_users)
+        users = map(self._wp_user_to_user, users)
+        User.objects.bulk_create(users)
+        return (User.objects.count(), cursor.rowcount)
+
+    ########
+    #HELPERS
+
     def _post_type_ids(self, mysql_cnx, post_type):
         """Returns the IDs of wp_posts of the given type.
            Type can be 'post', 'page' or 'attachment'."""
@@ -235,7 +260,10 @@ class Command(BaseCommand) :
         #elif post_type == 'attachment'
         else:
             raise "Unexistent post type!"
-        
+    
+    ###################
+    #OBJECT CONVERSIONS
+    
     #TODO 15+ Failed to populate slug Article.slug from name
     #TODO PRESERVE PERMALINKS
     def _post_to_article(self, post):
@@ -255,7 +283,9 @@ class Command(BaseCommand) :
             allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',
             summary = post['post_excerpt']
             #pretitle has no equivalent in WP
-            #TODO show_author=always user #FKs: user comments related_contents picture author source
+            #TODO show_author=always user
+            #TODO #FKs: comments related_contents picture author source
+            #TODO user = post['user_id'] ??? <-------------------
         )
 
     def _post_to_static_page(self, post):
@@ -268,7 +298,9 @@ class Command(BaseCommand) :
             published = post['post_status']=='publish',#private and draft are unpublished
             allow_comments = post['comment_status']=='open',#TODO see article's allow_comments
             summary = post['post_excerpt']
-            #TODO user related_contents comments show_author
+            #TODO related_contents comments
+            #TODO show_author=always user
+            #TODO user = post['user_id'] ??? <-------------------
         )
 
     def _wp_comment_to_custom(self, comment, site, content_type):
@@ -279,7 +311,7 @@ class Command(BaseCommand) :
             object_pk = comment['comment_post_ID'],
             content_type = content_type,
             site = site,
-            #user               user_id #FK/None TODO
+            #TODO user = comment['user_id'] ??? <-------------------
             user_name = comment['comment_author'],
             user_email = comment['comment_author_email'],
             user_url = comment['comment_author_url'],
@@ -293,5 +325,21 @@ class Command(BaseCommand) :
             subscribe = True #TODO Site default?
         )
 
-    def _comment_build_thread(self, comment):
-        pass
+    #https://docs.djangoproject.com/en/1.4/topics/auth/#fields
+    def _wp_user_to_user(self, wp_user):
+        return User(
+            id =  wp_user['ID'],
+            username = wp_user['user_login'],
+            #TODO parse fistname and lastname from user_nicename or display_name
+            first_name = wp_user['display_name'],
+            #last_name=wp_user['display_name'] 
+            #user_url is lost...
+            email = wp_user['user_email'],
+            #password='',#TODO reset or set_password=decrypt_wp(); save()
+            is_staff=True,
+            #user_status is a dead column in WP
+            is_active=True,
+            is_superuser=True,#else doesn't have any permissions
+            #last_login='', we don't have this data
+            date_joined = wp_user['user_registered']
+        )
