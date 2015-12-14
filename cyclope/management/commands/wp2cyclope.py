@@ -82,7 +82,8 @@ class Command(BaseCommand) :
         print "-> migrated {} static pages out of {} posts".format(pages_count, wp_posts_p_count)    
 
         # Comments <- wp_comments
-        self._fetch_comments(cnx, settings.site)
+        comments_count = self._fetch_comments(cnx, settings.site)
+        print "-> migrated {} comments".format(comments_count)
 
         #...
         #close mysql connection
@@ -118,6 +119,7 @@ class Command(BaseCommand) :
         #Site.objects.all().delete()
         Article.objects.all().delete()
         StaticPage.objects.all().delete()
+        CustomComment.objects.all().delete()
 
     def _fetch_site_settings(self, mysql_cnx):
         """Execute single query to WP _options table to retrieve the given option names."""
@@ -129,7 +131,7 @@ class Command(BaseCommand) :
         cursor.execute(query)
         wp_options = dict(cursor.fetchall())
         cursor.close()
-        #see _clear_cyclope_db TODO
+        #see _clear_cyclope_db
         #settings = SiteSettings()
         settings = SiteSettings.objects.all()[0]
         #site = Site()
@@ -191,8 +193,9 @@ class Command(BaseCommand) :
            instead of querying the related object for each comment and atomizing transactions, which could be expensive,
            we use an additional query for each content type only, and the transaction is repeated just as many times.
            we receive Site ID which is already above in the script."""
-        fields = ('comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
+        fields = ('comment_ID', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
         post_types_with_comments = ('post', 'page')#TODO attachments
+        counter = 0
         for post_type in post_types_with_comments:
             post_ids = self._post_type_ids(mysql_cnx, post_type)
             content_type = self._post_content_type(post_type)
@@ -208,7 +211,9 @@ class Command(BaseCommand) :
                 comment.save()
             transaction.commit()
             transaction.leave_transaction_management()
+            counter += cursor.rowcount
             cursor.close()
+        return counter
 
     def _post_type_ids(self, mysql_cnx, post_type):
         """Returns the IDs of wp_posts of the given type.
@@ -227,7 +232,7 @@ class Command(BaseCommand) :
             return ContentType.objects.get(app_label="articles", model="article")
         elif post_type == 'page':
             return ContentType.objects.get(app_label="staticpages", model="staticpage")
-        #TODO elif post_type == 'attachment'
+        #elif post_type == 'attachment'
         else:
             raise "Unexistent post type!"
         
@@ -244,10 +249,10 @@ class Command(BaseCommand) :
             creation_date = post['post_date'],
             modification_date = post['post_modified'],
             published = post['post_status']=='publish',#private and draft are unpublished
-            #TODO all posts have a status, they are saved as the option that's set(?).
+            #in WP all posts have a status, they are saved as the option that's set(?).
             #if the user then tries to close them all, he shouldn't set them one by one.
             #whe should set them to SITE default unless comments are explicitly closed, which is the minority(?)       
-            allow_comments = post['comment_status']=='open',
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',
             summary = post['post_excerpt']
             #pretitle has no equivalent in WP
             #TODO show_author=always user #FKs: user comments related_contents picture author source
@@ -267,10 +272,12 @@ class Command(BaseCommand) :
         )
 
     def _wp_comment_to_custom(self, comment, site, content_type):
+        comment_parent = comment['comment_parent'] if comment['comment_parent']!=0 else None
+        #tree_path and last_child_id are automagically set by threadedcomments framework
         return CustomComment(
+            id = comment['comment_ID'],
             object_pk = comment['comment_post_ID'],
             content_type = content_type,
-            #together they make content_object
             site = site,
             #user               user_id #FK/None TODO
             user_name = comment['comment_author'],
@@ -282,11 +289,9 @@ class Command(BaseCommand) :
             #TODO
             #is_public          comment_approved
             #is_removed         ..
-            #TODO THREADED
-            #title              x
-            #parent             comment_parent
-            #last_child         
-            #tree_path          
-            #CUSTOM
+            parent_id = comment_parent,
             subscribe = True #TODO Site default?
         )
+
+    def _comment_build_thread(self, comment):
+        pass
