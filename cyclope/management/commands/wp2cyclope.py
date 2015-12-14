@@ -152,6 +152,7 @@ class Command(BaseCommand) :
         settings.allow_comments = u'YES' if wp_options['default_comment_status']=='open' else u'NO'
         settings.moderate_comments = wp_options['comment_moderation']==1 #default False
         settings.enable_comments_notifications = wp_options['comments_notify'] in ('', 1) #default True
+        settings.show_author = 'USER' # WP uses users as authors
         site.name = wp_options['blogname']
         site.domain = wp_options['siteurl']#TODO strip http:// 
         site.save()
@@ -284,8 +285,8 @@ class Command(BaseCommand) :
             summary = post['post_excerpt'],
             #pretitle has no equivalent in WP
             #TODO #FKs: comments related_contents picture author source
-            user_id = post['post_author'] # WP referential integrity maintained
-            #TODO show_author=always user
+            user_id = post['post_author'], # WP referential integrity maintained
+            show_author = 'SITE' # default USER 
         )
 
     def _post_to_static_page(self, post):
@@ -299,8 +300,8 @@ class Command(BaseCommand) :
             allow_comments = post['comment_status']=='open',#TODO see article's allow_comments
             summary = post['post_excerpt'],
             #TODO related_contents comments
-            user_id = post['post_author'] # WP referential integrity maintained
-            #TODO show_author=always user
+            user_id = post['post_author'], # WP referential integrity maintained
+            show_author = 'SITE' # default USER 
         )
 
     def _wp_comment_to_custom(self, comment, site, content_type):
