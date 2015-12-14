@@ -50,10 +50,17 @@ class Command(BaseCommand) :
             default='wp_',
             help='Wordpress DB Table Prefix (defaults to \'wp_\').'
         ),
+        make_option('--default_password',
+            action='store',
+            dest='wp_user_password',
+            default=None,
+            help='Default password for ALL users. Optional, otherwise username will be used.s'
+        ),
     )
 
     # class constant
     wp_prefix = 'wp_'
+    wp_user_password = None
 
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
@@ -63,6 +70,7 @@ class Command(BaseCommand) :
         :::::::::::::::::::::::::::::::::\n\n-> hola, amigo!"""
 
         self.wp_prefix = options['wp_prefix']
+        self.wp_user_password = options['wp_user_password']
         
         print "-> clearing cyclope sqlite database..."
         self._clear_cyclope_db()
@@ -75,8 +83,14 @@ class Command(BaseCommand) :
         print "-> nice to meet you, "+settings.site.name
         
         # Users <- wp_users
+        #TODO send users a reset password link instead
         users_count, wp_users_count = self._fetch_users(cnx)
         print "-> migrated {}/{} users".format(users_count, wp_users_count)
+        print "-> all users should reset their passwords!"
+        if self.wp_user_password :
+            print "   default temporary password for all users: {}.".format(self.wp_user_password)
+        else:
+            print "   temporary user passwords default to their username."
 
         # Articles <- wp_posts
         wp_posts_a_count, articles_count = self._fetch_articles(cnx)
@@ -329,14 +343,13 @@ class Command(BaseCommand) :
 
     #https://docs.djangoproject.com/en/1.4/topics/auth/#fields
     def _wp_user_to_user(self, wp_user):
-        return User(
+        user = User(
             id =  wp_user['ID'],
             username = wp_user['user_login'],
             first_name = wp_user['display_name'],
             #last_name=wp_user['user_nicename'], or parse display_name 
             #WP user_url will be lost
             email = wp_user['user_email'],
-            #password='',#TODO reset
             is_staff=True,
             #user_status is a dead column in WP
             is_active=True,
@@ -344,3 +357,6 @@ class Command(BaseCommand) :
             #last_login='', we don't have this data in WP?
             date_joined = wp_user['user_registered']
         )
+        password = self.wp_user_password if self.wp_user_password else user.username
+        user.set_password(password)
+        return user
