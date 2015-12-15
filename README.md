@@ -1,5 +1,11 @@
 # wp2cyclope
-WordPress to [Cyclope](http://cyclope.codigosur.org/) database migration script.
+_WordPress_ to **Cyclope** database migration script.
+
+wp2cyclope is part of [Cyclope](http://cyclope.codigosur.org/), a latino django-based CMS by [CódigoSur](http://cyclope.codigosur.org/)
+
+it sits at *cyclope/management/commands/* as a custom [django-admin command](https://docs.djangoproject.com/en/1.4/howto/custom-management-commands/).
+
+working on *python v2.7 django v1.4.2 cyclope 3*
 
 **Usage: manage.py wp2cyclope [options]**
 
@@ -36,15 +42,15 @@ sys	0m2.644s
 ```
 
 Mandatory:
-+ **--server=SERVER**       WP-Site Host Name.
-+ **--user=USER**           Database User.
-+ **--database=DB**         Database name.
++ **--server**          WP-Site Host Name.
++ **--user**            Database User.
++ **--database**        Database name.
 
 Optional:
-+ **--password=PASSWORD**   Database Password.
-+ **--table_prefix=WP_PREFIX**
++ **--password**        Database Password.
++ **--table_prefix**
 
                         Wordpress DB Table Prefix (defaults to 'wp_').
-+ **--default_password=WP_USER_PASSWORD**
++ **--default_password**
 
                         Default password for ALL users. Optional, otherwise username will be used.s
