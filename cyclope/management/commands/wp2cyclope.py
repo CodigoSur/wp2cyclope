@@ -10,6 +10,7 @@ from cyclope.apps.staticpages.models import StaticPage
 from django.contrib.contenttypes.models import ContentType
 from cyclope.apps.custom_comments.models import CustomComment
 from django.contrib.auth.models import User
+from cyclope.core.collections.models import Collection, Category
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -104,6 +105,13 @@ class Command(BaseCommand) :
         comments_count = self._fetch_comments(cnx, settings.site)
         print "-> migrated {} comments".format(comments_count)
 
+        # ExternalContent <- wp_links
+        #TODO
+
+        # Collections & Categories <- WP terms & term_taxonomies
+        collection_counts, category_count, wp_term_taxonomy_count = self._fetch_term_taxonomies(cnx)
+        print "-> migrated {} collections and {} categories out of {} term taxonomies".format(collection_counts, category_count, wp_term_taxonomy_count)
+
         #...
         #close mysql connection
         cnx.close()
@@ -140,6 +148,8 @@ class Command(BaseCommand) :
         StaticPage.objects.all().delete()
         CustomComment.objects.all().delete()
         User.objects.all().delete()
+        Collection.objects.all().delete()
+        Category.objects.all().delete()
 
     ########
     #QUERIES
@@ -250,7 +260,38 @@ class Command(BaseCommand) :
         users = map(_hash_result,[fields]*len(wp_users), wp_users)
         users = map(self._wp_user_to_user, users)
         User.objects.bulk_create(users)
-        return (User.objects.count(), cursor.rowcount)
+        counts = (User.objects.count(), cursor.rowcount)
+        cursor.close()
+        return counts
+
+    def _fetch_term_taxonomies(self, mysql_cnx):
+        """Brings wp_terms"""
+        #Cyclope collections are WP term_taxonomies
+        query = "SELECT DISTINCT(taxonomy) FROM "+self.wp_prefix+"term_taxonomy"
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        for taxonomy in cursor :
+            collection = self._wp_term_taxonomy_to_collection(taxonomy[0])
+            collection.save()
+        cursor.close()
+        #Cyclope categories are WP terms
+        cursor = mysql_cnx.cursor()
+        fields = ('t.term_id', 't.name', 'tt.taxonomy', 'tt.parent', 'tt.description')#preserve'slug'? even for articles...
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"terms t INNER JOIN "+self.wp_prefix+"term_taxonomy tt ON t.term_id = tt.term_id"
+        cursor.execute(query)
+        #query for collection ids only once to associate them
+        collection_ids = {}
+        for collection in Collection.objects.all() :
+            collection_ids[collection.name]=collection.id
+        #save categorties in bulk so it doesn't call custom Category save, which doesn't allow custom ids (WP referential integrity)    
+        categories=[]
+        for term_taxonomy in cursor:
+            cat_hash = dict(zip(fields, term_taxonomy))
+            categories.append(self._wp_term_to_category(cat_hash,collection_ids))
+        Category.objects.bulk_create(categories)
+        counts = (Collection.objects.count(), Category.objects.count(), cursor.rowcount)
+        cursor.close()
+        return counts
 
     ########
     #HELPERS
@@ -360,3 +401,24 @@ class Command(BaseCommand) :
         password = self.wp_user_password if self.wp_user_password else user.username
         user.set_password(password)
         return user
+
+    def _wp_term_taxonomy_to_collection(self, taxonomy):
+        return Collection(
+            name = taxonomy,#everything else to defaults
+            #TODO check content_types, default_list_views, view_options
+        )
+
+    def _wp_term_to_category(self, term_taxonomy, collection_ids):
+        return Category(
+            id = term_taxonomy['t.term_id'],
+            name = term_taxonomy['t.name'],
+            collection_id = collection_ids[term_taxonomy['tt.taxonomy']],
+            description = term_taxonomy['tt.description'],
+            parent_id = term_taxonomy['tt.parent'] if term_taxonomy['tt.parent']!=0 else None,        
+            #TODO hierarchical categories should properly set tree values
+            #bulk creation fails if these null
+            lft=0,
+            rght=0,
+            tree_id=term_taxonomy['t.term_id'],
+            level=0
+        )
