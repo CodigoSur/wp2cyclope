@@ -300,7 +300,7 @@ class Command(BaseCommand) :
             #pretitle has no equivalent in WP
             #TODO #FKs: comments related_contents picture author source
             user_id = post['post_author'], # WP referential integrity maintained
-            show_author = 'SITE' # default USER 
+            show_author = 'USER' #TODO default SITE doesn't work when site sets USER
         )
 
     def _post_to_static_page(self, post):
@@ -315,7 +315,7 @@ class Command(BaseCommand) :
             summary = post['post_excerpt'],
             #TODO related_contents comments
             user_id = post['post_author'], # WP referential integrity maintained
-            show_author = 'SITE' # default USER 
+            show_author = 'USER' #TODO default SITE doesn't work when site sets USER
         )
 
     def _wp_comment_to_custom(self, comment, site, content_type):
