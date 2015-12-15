@@ -38,10 +38,10 @@ sys	0m2.644s
 Mandatory:
 + **--server=SERVER**       WP-Site Host Name.
 + **--user=USER**           Database User.
-+ **--password=PASSWORD**   Database Password.
 + **--database=DB**         Database name.
 
 Optional:
++ **--password=PASSWORD**   Database Password.
 + **--table_prefix=WP_PREFIX**
 
                         Wordpress DB Table Prefix (defaults to 'wp_').
