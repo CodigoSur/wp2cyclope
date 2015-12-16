@@ -10,7 +10,7 @@ from cyclope.apps.staticpages.models import StaticPage
 from django.contrib.contenttypes.models import ContentType
 from cyclope.apps.custom_comments.models import CustomComment
 from django.contrib.auth.models import User
-from cyclope.core.collections.models import Collection, Category
+from cyclope.core.collections.models import Collection, Category, Categorization
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -266,7 +266,7 @@ class Command(BaseCommand) :
 
     def _fetch_term_taxonomies(self, mysql_cnx):
         """Brings wp_terms"""
-        #Cyclope collections are WP term_taxonomies
+        #Cyclope collections are WP term taxonomies
         query = "SELECT DISTINCT(taxonomy) FROM "+self.wp_prefix+"term_taxonomy"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -288,9 +288,23 @@ class Command(BaseCommand) :
         for term_taxonomy in cursor:
             cat_hash = dict(zip(fields, term_taxonomy))
             categories.append(self._wp_term_to_category(cat_hash,collection_ids))
-        Category.objects.bulk_create(categories)
-        counts = (Collection.objects.count(), Category.objects.count(), cursor.rowcount)
+        term_taxonomy_count = cursor.rowcount     
         cursor.close()
+        Category.objects.bulk_create(categories)
+        #Cyclope categorizations are WP term relationships
+        object_type_ids = self._object_type_ids()#by this time posts are already created in our db
+        fields = ('tr.object_id', 'tr.term_taxonomy_id', 'tt.term_id', 'tt.taxonomy', 'tr.term_order')
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"term_taxonomy tt INNER JOIN "+self.wp_prefix+"term_relationships tr ON tr.term_taxonomy_id=tt.term_taxonomy_id"
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        categorizations = []
+        for term_relationship in cursor:
+            categorizations.append(self._wp_term_relationship_to_categorization(dict(zip(fields, term_relationship)), object_type_ids))
+        cursor.close()
+        categorizations = filter(None, categorizations)#TODO links...
+        Categorization.objects.bulk_create(categorizations)                
+        #
+        counts = (Collection.objects.count(), Category.objects.count(), term_taxonomy_count)
         return counts
 
     ########
@@ -313,9 +327,21 @@ class Command(BaseCommand) :
             return ContentType.objects.get(app_label="articles", model="article")
         elif post_type == 'page':
             return ContentType.objects.get(app_label="staticpages", model="staticpage")
-        #elif post_type == 'attachment'
+        #elif post_type == 'attachment' TODO
         else:
             raise "Unexistent post type!"
+
+    def _object_type_ids(self):
+        #wp terms relate to posts, which are cyclope's articles, staticpages TODO or attachments
+        #comming from the same tables, their IDs shouldn't intersect
+        article_ids = []
+        page_ids = []
+        article_type_id = self._post_content_type('post').id
+        page_type_id = self._post_content_type('page').id
+        for article in Article.objects.all(): article_ids.append(article.id)
+        for page in StaticPage.objects.all(): page_ids.append(page.id)
+        return {article_type_id: article_ids, page_type_id: page_ids}
+        #TODO terms can also relate to links?
     
     ###################
     #OBJECT CONVERSIONS
@@ -416,9 +442,24 @@ class Command(BaseCommand) :
             description = term_taxonomy['tt.description'],
             parent_id = term_taxonomy['tt.parent'] if term_taxonomy['tt.parent']!=0 else None,        
             #TODO hierarchical categories should properly set tree values
-            #bulk creation fails if these null
+            #bulk creation fails if these are null
             lft=0,
             rght=0,
             tree_id=term_taxonomy['t.term_id'],
             level=0
         )
+
+    def _wp_term_relationship_to_categorization(self, term_relationship, object_type_ids):
+        def _get_object_type(object_type_ids, object_id):
+            for item in object_type_ids.items(): 
+                if object_id in item[1]:
+                    return item[0]
+        content_type_id = _get_object_type(object_type_ids, term_relationship['tr.object_id'])
+        if content_type_id is None: return #TODO returning None for links, they will be treated in a next commit
+        return Categorization(
+            category_id = term_relationship['tt.term_id'],
+            content_type_id = content_type_id,
+            object_id = term_relationship['tr.object_id'],
+            order = term_relationship['tr.term_order']
+        )
+
