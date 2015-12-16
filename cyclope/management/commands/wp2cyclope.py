@@ -11,6 +11,7 @@ from django.contrib.contenttypes.models import ContentType
 from cyclope.apps.custom_comments.models import CustomComment
 from django.contrib.auth.models import User
 from cyclope.core.collections.models import Collection, Category, Categorization
+from cyclope.apps.medialibrary.models import ExternalContent
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -106,7 +107,8 @@ class Command(BaseCommand) :
         print "-> migrated {} comments".format(comments_count)
 
         # ExternalContent <- wp_links
-        #TODO
+        ex_content_count, wp_links_count = self._fetch_links(cnx)
+        print "-> migrated {} external contents out of {} links".format(ex_content_count, wp_links_count)
 
         # Collections & Categories <- WP terms & term_taxonomies
         collection_counts, category_count, wp_term_taxonomy_count = self._fetch_term_taxonomies(cnx)
@@ -150,6 +152,7 @@ class Command(BaseCommand) :
         User.objects.all().delete()
         Collection.objects.all().delete()
         Category.objects.all().delete()
+        ExternalContent.objects.all().delete()
 
     ########
     #QUERIES
@@ -303,10 +306,26 @@ class Command(BaseCommand) :
         cursor.close()
         categorizations = filter(None, categorizations)#TODO links...
         Categorization.objects.bulk_create(categorizations)                
-        #
+        #TODO categorization counts
         counts = (Collection.objects.count(), Category.objects.count(), term_taxonomy_count)
         return counts
 
+    def _fetch_links(self, mysql_cnx):
+        """Stores WP links as Cyclope ExternalContent objects."""
+        fields = ('link_id', 'link_url', 'link_description', 'link_image', 'link_name', 'link_visible', 'link_owner', 'link_updated')
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"links"
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        transaction.enter_transaction_management()
+        transaction.managed(True)
+        for wp_link in cursor :
+            link = self._wp_link_to_external_content(dict(zip(fields, wp_link)))
+            link.save() # slug
+        transaction.commit()
+        transaction.leave_transaction_management()
+        counts = (ExternalContent.objects.count(), cursor.rowcount)
+        cursor.close()
+        return counts
     ########
     #HELPERS
 
@@ -463,3 +482,21 @@ class Command(BaseCommand) :
             order = term_relationship['tr.term_order']
         )
 
+    def _wp_link_to_external_content(self, link):
+        return ExternalContent(
+            id = link['link_id'],
+            content_url = link['link_url'],
+            description = link['link_description'],
+            #TODO image = 'link_image' 
+            #author = owner (user)
+            #source =
+            #base content            
+            name = link['link_name'],
+            published = link['link_visible'] == 'Y',
+            user_id = link['link_owner'],
+            #creation_date = ,#today?
+            modification_date = link['link_updated'],
+            allow_comments = 'SITE', #if post['comment_status']!='closed' else 'NO',
+            show_author = 'USER', #default SITE doesn't work when site sets USER
+        )
+        #target(_blank), rating, updated, rel, notes, rss will be lost
