@@ -157,6 +157,9 @@ class Command(BaseCommand) :
         Collection.objects.all().delete()
         Category.objects.all().delete()
         ExternalContent.objects.all().delete()
+        Picture.objects.all().delete()
+        Document.objects.all().delete()
+        RegularFile.objects.all().delete()
 
     ########
     #QUERIES
@@ -253,10 +256,10 @@ class Command(BaseCommand) :
            we use an additional query for each content type only, and the transaction is repeated just as many times.
            we receive Site ID which is already above in the script."""
         fields = ('comment_ID', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
-        post_types_with_comments = ('post', 'page')#TODO attachments
+        post_types_with_comments = ('post', 'page', 'picture', 'document', 'regular_file') # TODO soundtracks, videos, etc.
         counter = 0
         for post_type in post_types_with_comments:
-            post_ids = self._post_type_ids(mysql_cnx, post_type)
+            post_ids = self._post_type_ids(post_type)
             content_type = self._post_content_type(post_type)
             query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam' AND comment_post_ID IN {}".format(post_ids)
             cursor = mysql_cnx.cursor()
@@ -290,7 +293,7 @@ class Command(BaseCommand) :
         return counts
 
     def _fetch_term_taxonomies(self, mysql_cnx):
-        """Creates a Collection from each of the taxonomies in the term_taxonomy table. (Taxonomy is a column)
+        """Creates a Collection from each of the taxonomies in the term_taxonomy table. (taxonomy is a column)
            Creates a Category for each Term. The relation with its collection is inferred from the taxonomy value.
            Creates Categorizations to link objects to its Categories reading the term_relationships table.
            The type of the related object is deduced from its id, since they all come from the wp_posts table. (Except links, see detail)"""
@@ -354,38 +357,63 @@ class Command(BaseCommand) :
     ########
     #HELPERS
 
-    def _post_type_ids(self, mysql_cnx, post_type):
+    def _post_type_ids(self, post_type):
         """Returns the IDs of wp_posts of the given type.
            Type can be 'post', 'page' or 'attachment'."""
-        query = "SELECT ID FROM "+self.wp_prefix+"posts WHERE post_type='{}';".format(post_type)
-        cursor = mysql_cnx.cursor()
-        cursor.execute(query)
-        post_ids = cursor.fetchall()
-        cursor.close()
-        def _flat_result(row): return row[0]
-        post_ids = tuple(map(_flat_result, post_ids))
-        return post_ids
+        if post_type == 'post':
+            post_ids = [article.id for article in Article.objects.all()]
+        elif post_type == 'page':
+            post_ids = [page.id for page in StaticPage.objects.all()]
+        elif post_type == 'picture':
+            post_ids = [picture.id for picture in Picture.objects.all()]
+        elif post_type == 'document':
+            post_ids = [document.id for document in Document.objects.all()]
+        elif post_type == 'regular_file':
+            post_ids = [regular_file.id for regular_file in RegularFile.objects.all()]
+        #TODO soundtrack, video...
+        return tuple(post_ids)
 
     def _post_content_type(self, post_type):
         if post_type == 'post':
             return ContentType.objects.get(app_label="articles", model="article")
         elif post_type == 'page':
             return ContentType.objects.get(app_label="staticpages", model="staticpage")
-        #elif post_type == 'attachment' TODO
-        else:
-            raise "Unexistent post type!"
+        elif post_type == 'picture':
+            return ContentType.objects.get(app_label="medialibrary", model="picture")
+        elif post_type == 'document':
+            return ContentType.objects.get(app_label="medialibrary", model="document")
+        elif post_type == 'regular_file':
+            return ContentType.objects.get(app_label="medialibrary", model="regularfile")
+        #TODO soundtrack, video...
 
     def _object_type_ids(self):
-        #wp terms relate to posts, which are cyclope's articles, staticpages TODO or attachments
-        #comming from the same tables, their IDs shouldn't intersect
-        article_ids = []
-        page_ids = []
+        #wp terms relate to posts, which are cyclope's articles, staticpages or attachments
         article_type_id = self._post_content_type('post').id
         page_type_id = self._post_content_type('page').id
-        for article in Article.objects.all(): article_ids.append(article.id)
-        for page in StaticPage.objects.all(): page_ids.append(page.id)
-        return {article_type_id: article_ids, page_type_id: page_ids}
-    
+        picture_type_id = self._post_content_type('picture').id
+        document_type_id = self._post_content_type('document').id
+        regular_file_type_id = self._post_content_type('regular_file').id
+        #comming from the same tables, their IDs shouldn't intersect
+        article_ids = [article.id for article in Article.objects.all()]
+        page_ids = [page.id for page in StaticPage.objects.all()]
+        picture_ids = [picture.id for picture in Picture.objects.all()]
+        document_ids = [document.id for document in Document.objects.all()]
+        file_ids = [regular_file.id for regular_file in RegularFile.objects.all()]
+        return {
+            article_type_id: article_ids, 
+            page_type_id: page_ids, 
+            picture_type_id: picture_ids, 
+            document_type_id: document_ids, 
+            regular_file_type_id: file_ids
+        }
+
+    #TODO MIME <-> ContentType hash table    
+    def _post_type_to_mime(self, post_type):
+        if post_type == 'picture' : return ('image/png', 'image/gif')#TODO...
+        elif post_type == 'document' : return ('application/pdf',)
+        elif post_type == 'regular_file' : return ('application/xml') #zip... TODO wildcard?
+        #TODO ...
+
     ###################
     #OBJECT CONVERSIONS
     
@@ -425,7 +453,7 @@ class Command(BaseCommand) :
             summary = post['post_excerpt'],
             #TODO related_contents comments
             user_id = post['post_author'], # WP referential integrity maintained
-            show_author = 'USER' #TODO default SITE doesn't work when site sets USER
+            show_author = 'USER' #default SITE doesn't work when site sets USER
         )
 
     def _wp_comment_to_custom(self, comment, site, content_type):
@@ -588,8 +616,9 @@ class Command(BaseCommand) :
                 file = post['guid']#TODO PARSE to FileBrowseField...
                 #image will be None
             )
-        #elif...
+        #TODO elif...
             #SoundTrack
             #MovieClip
             #FlashMovie
-        #TODO hoy many mime_types are possible? text/plain application/xml application/zip', 'application/x-gzip
+        #MIME top level Media Types : application, audio, example, image, message, model, multipart, text, video
+        #https://en.wikipedia.org/wiki/Media_type
