@@ -111,9 +111,9 @@ class Command(BaseCommand) :
         print "-> migrated {} external contents out of {} links".format(ex_content_count, wp_links_count)
 
         # Collections & Categories <- WP terms & term_taxonomies
-        collection_counts, category_count, wp_term_taxonomy_count = self._fetch_term_taxonomies(cnx)
+        collection_counts, category_count, wp_term_taxonomy_count, categorizations_count = self._fetch_term_taxonomies(cnx)
         print "-> migrated {} collections and {} categories out of {} term taxonomies".format(collection_counts, category_count, wp_term_taxonomy_count)
-
+        print "-> categorized {} articles, pages & links...".format(categorizations_count)
         #...
         #close mysql connection
         cnx.close()
@@ -268,7 +268,10 @@ class Command(BaseCommand) :
         return counts
 
     def _fetch_term_taxonomies(self, mysql_cnx):
-        """Brings wp_terms"""
+        """Creates a Collection from each of the taxonomies in the term_taxonomy table. (Taxonomy is a column)
+           Creates a Category for each Term. The relation with its collection is inferred from the taxonomy value.
+           Creates Categorizations to link objects to its Categories reading the term_relationships table.
+           The type of the related object is deduced from its id, since they all come from the wp_posts table. (Except links, see detail)"""
         #Cyclope collections are WP term taxonomies
         query = "SELECT DISTINCT(taxonomy) FROM "+self.wp_prefix+"term_taxonomy"
         cursor = mysql_cnx.cursor()
@@ -305,8 +308,8 @@ class Command(BaseCommand) :
             categorizations.append(self._wp_term_relationship_to_categorization(dict(zip(fields, term_relationship)), object_type_ids))
         cursor.close()
         Categorization.objects.bulk_create(categorizations)                
-        #TODO categorization counts
-        counts = (Collection.objects.count(), Category.objects.count(), term_taxonomy_count)
+        #
+        counts = (Collection.objects.count(), Category.objects.count(), term_taxonomy_count, len(categorizations))
         return counts
 
     def _fetch_links(self, mysql_cnx):
@@ -325,6 +328,7 @@ class Command(BaseCommand) :
         counts = (ExternalContent.objects.count(), cursor.rowcount)
         cursor.close()
         return counts
+
     ########
     #HELPERS
 
@@ -492,8 +496,6 @@ class Command(BaseCommand) :
             description = link['link_description'],
             #TODO image = 'link_image'
             new_window = link['link_target'] == '_blank',
-            #author = owner (user)
-            #source =
             #base content            
             name = link['link_name'],
             published = link['link_visible'] == 'Y',
