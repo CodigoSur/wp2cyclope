@@ -304,7 +304,6 @@ class Command(BaseCommand) :
         for term_relationship in cursor:
             categorizations.append(self._wp_term_relationship_to_categorization(dict(zip(fields, term_relationship)), object_type_ids))
         cursor.close()
-        categorizations = filter(None, categorizations)#TODO links...
         Categorization.objects.bulk_create(categorizations)                
         #TODO categorization counts
         counts = (Collection.objects.count(), Category.objects.count(), term_taxonomy_count)
@@ -312,7 +311,7 @@ class Command(BaseCommand) :
 
     def _fetch_links(self, mysql_cnx):
         """Stores WP links as Cyclope ExternalContent objects."""
-        fields = ('link_id', 'link_url', 'link_description', 'link_image', 'link_name', 'link_visible', 'link_owner', 'link_updated')
+        fields = ('link_id', 'link_url', 'link_description', 'link_image', 'link_name', 'link_visible', 'link_owner', 'link_updated', 'link_target')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"links"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -360,7 +359,6 @@ class Command(BaseCommand) :
         for article in Article.objects.all(): article_ids.append(article.id)
         for page in StaticPage.objects.all(): page_ids.append(page.id)
         return {article_type_id: article_ids, page_type_id: page_ids}
-        #TODO terms can also relate to links?
     
     ###################
     #OBJECT CONVERSIONS
@@ -469,12 +467,17 @@ class Command(BaseCommand) :
         )
 
     def _wp_term_relationship_to_categorization(self, term_relationship, object_type_ids):
-        def _get_object_type(object_type_ids, object_id):
-            for item in object_type_ids.items(): 
-                if object_id in item[1]:
-                    return item[0]
-        content_type_id = _get_object_type(object_type_ids, term_relationship['tr.object_id'])
-        if content_type_id is None: return #TODO returning None for links, they will be treated in a next commit
+        # term taxonomies relate to posts which we have created as articles, static pages and attachments
+        # only the taxonomy link_category relates to links
+        def _get_object_type(object_type_ids, object_id, taxonomy, external_content_type_id):
+            if taxonomy != 'link_category':
+                for item in object_type_ids.items(): 
+                    if object_id in item[1]:
+                        return item[0]
+            else:
+                return external_content_type_id # single query...
+        external_content_type_id = ContentType.objects.get(name='external content').id # links
+        content_type_id = _get_object_type(object_type_ids, term_relationship['tr.object_id'], term_relationship['tt.taxonomy'], external_content_type_id)
         return Categorization(
             category_id = term_relationship['tt.term_id'],
             content_type_id = content_type_id,
@@ -487,7 +490,8 @@ class Command(BaseCommand) :
             id = link['link_id'],
             content_url = link['link_url'],
             description = link['link_description'],
-            #TODO image = 'link_image' 
+            #TODO image = 'link_image'
+            new_window = link['link_target'] == '_blank',
             #author = owner (user)
             #source =
             #base content            
@@ -497,6 +501,6 @@ class Command(BaseCommand) :
             #creation_date = ,#today?
             modification_date = link['link_updated'],
             allow_comments = 'SITE', #if post['comment_status']!='closed' else 'NO',
-            show_author = 'USER', #default SITE doesn't work when site sets USER
+            show_author = 'USER', #default SITE doesn't work when site sets
         )
-        #target(_blank), rating, updated, rel, notes, rss will be lost
+        #rating, updated, rel, notes, rss will be lost
