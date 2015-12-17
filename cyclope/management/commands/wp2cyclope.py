@@ -11,7 +11,7 @@ from django.contrib.contenttypes.models import ContentType
 from cyclope.apps.custom_comments.models import CustomComment
 from django.contrib.auth.models import User
 from cyclope.core.collections.models import Collection, Category, Categorization
-from cyclope.apps.medialibrary.models import ExternalContent
+from cyclope.apps.medialibrary.models import ExternalContent, Picture, Document, RegularFile, BaseMedia
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -102,19 +102,23 @@ class Command(BaseCommand) :
         wp_posts_p_count, pages_count = self._fetch_pages(cnx)
         print "-> migrated {} static pages out of {} posts".format(pages_count, wp_posts_p_count)    
 
-        # Comments <- wp_comments
-        comments_count = self._fetch_comments(cnx, settings.site)
-        print "-> migrated {} comments".format(comments_count)
-
         # ExternalContent <- wp_links
         ex_content_count, wp_links_count = self._fetch_links(cnx)
         print "-> migrated {} external contents out of {} links".format(ex_content_count, wp_links_count)
+
+        # MediaLibrary <- wp_posts
+        attachments_count, pictures_count, documents_count, files_count = self._fetch_attachments(cnx)
+        print "-> migrated {} pictures, {} documents, {} regular files out of {} attachments".format(pictures_count, documents_count, files_count, attachments_count)
+
+        # Comments <- wp_comments
+        comments_count = self._fetch_comments(cnx, settings.site)
+        print "-> migrated {} comments".format(comments_count)
 
         # Collections & Categories <- WP terms & term_taxonomies
         collection_counts, category_count, wp_term_taxonomy_count, categorizations_count = self._fetch_term_taxonomies(cnx)
         print "-> migrated {} collections and {} categories out of {} term taxonomies".format(collection_counts, category_count, wp_term_taxonomy_count)
         print "-> categorized {} articles, pages & links...".format(categorizations_count)
-        #...
+
         #close mysql connection
         cnx.close()
         # WELCOME
@@ -224,6 +228,24 @@ class Command(BaseCommand) :
         counts = (cursor.rowcount, StaticPage.objects.count())
         cursor.close()
         return counts 
+
+    def _fetch_attachments(self, mysql_cnx):
+        """Queries to WP posts table selecting attachments, not..."""
+        fields = ('ID', 'post_mime_type', 'guid', 'post_title', 'post_status', 'post_author', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
+        query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='attachment'"
+        cursor = mysql_cnx.cursor()
+        cursor.execute(query)
+        #single transaction for all articles
+        transaction.enter_transaction_management()
+        transaction.managed(True)
+        for wp_post in cursor :
+            attachment = self._post_to_attachment(dict(zip(fields, wp_post)))
+            attachment.save() #whatever its type 
+        transaction.commit()
+        transaction.leave_transaction_management()
+        counts = (cursor.rowcount, Picture.objects.count(), Document.objects.count(), RegularFile.objects.count())#TODO SoundTrack, MovieClips, etc
+        cursor.close()
+        return counts
 
     def _fetch_comments(self, mysql_cnx, site):
         """Populates cyclope custom comments from WP table wp_comments.
@@ -494,8 +516,8 @@ class Command(BaseCommand) :
             id = link['link_id'],
             content_url = link['link_url'],
             description = link['link_description'],
-            #TODO image = 'link_image'
             new_window = link['link_target'] == '_blank',
+            #TODO image = 'link_image'            
             #base content            
             name = link['link_name'],
             published = link['link_visible'] == 'Y',
@@ -506,3 +528,68 @@ class Command(BaseCommand) :
             show_author = 'USER', #default SITE doesn't work when site sets
         )
         #rating, updated, rel, notes, rss will be lost
+
+    #TODO post_parent can be used for RelatedContents?
+    def _post_to_attachment(self, post):
+        if post['post_mime_type'] in ('image/png', 'image/jpeg', 'image/gif'):#TODO image/*
+            return Picture(
+                #BaseContent
+                id = post['ID'],
+                name = post['post_title'],
+                #slug is post_name
+                published = post['post_status']=='publish',
+                user_id = post['post_author'],
+                #related_contents
+                creation_date = post['post_date'],
+                modification_date = post['post_modified'],
+                allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article 
+                #comments
+                show_author = 'USER',
+                #BaseMedia                
+                #author
+                #source
+                description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
+                #Picture
+                image = post['guid']#TODO PARSE http://www.numerica.cl/wp-content/uploads/2014/05/numerik.png to FileBrowseField...
+            )
+        elif post['post_mime_type'] in ('application/pdf',):
+            return Document(
+                #BaseContent
+                id = post['ID'],
+                name = post['post_title'],
+                #slug is post_name
+                published = post['post_status']=='publish',
+                user_id = post['post_author'],
+                creation_date = post['post_date'],
+                modification_date = post['post_modified'],
+                allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article
+                show_author = 'USER',
+                #BaseMedia                
+                description = post['post_content'] or post['post_excerpt'], # see Picture
+                #Document
+                document = post['guid']#TODO PARSE to FileBrowseField...
+                #image will be None
+            )
+        else:
+            return RegularFile(
+                #BaseContent
+                id = post['ID'],
+                name = post['post_title'],
+                #slug is post_name
+                published = post['post_status']=='publish',
+                user_id = post['post_author'],
+                creation_date = post['post_date'],
+                modification_date = post['post_modified'],
+                allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',# see _post_to_article
+                show_author = 'USER',
+                #BaseMedia                
+                description = post['post_content'] or post['post_excerpt'], # see Picture
+                #Document
+                file = post['guid']#TODO PARSE to FileBrowseField...
+                #image will be None
+            )
+        #elif...
+            #SoundTrack
+            #MovieClip
+            #FlashMovie
+        #TODO hoy many mime_types are possible? text/plain application/xml application/zip', 'application/x-gzip
