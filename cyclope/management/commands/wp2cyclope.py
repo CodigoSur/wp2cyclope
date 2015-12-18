@@ -256,7 +256,7 @@ class Command(BaseCommand) :
            we use an additional query for each content type only, and the transaction is repeated just as many times.
            we receive Site ID which is already above in the script."""
         fields = ('comment_ID', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
-        post_types_with_comments = ('post', 'page', 'picture', 'document', 'regular_file') # TODO soundtracks, videos, etc.
+        post_types_with_comments = ('article', 'staticpage', 'picture', 'document', 'regularfile') # TODO soundtracks, videos, etc.
         counter = 0
         for post_type in post_types_with_comments:
             post_ids = self._post_type_ids(post_type)
@@ -323,7 +323,8 @@ class Command(BaseCommand) :
         cursor.close()
         Category.objects.bulk_create(categories)
         #Cyclope categorizations are WP term relationships
-        object_type_ids = self._object_type_ids()#by this time posts are already created in our db
+        post_types = ('article', 'staticpage', 'picture', 'document', 'regularfile') # TODO soundtracks, videos, etc.
+        object_type_ids = self._object_type_ids(post_types)#by this time posts are already created in our db
         fields = ('tr.object_id', 'tr.term_taxonomy_id', 'tt.term_id', 'tt.taxonomy', 'tr.term_order')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"term_taxonomy tt INNER JOIN "+self.wp_prefix+"term_relationships tr ON tr.term_taxonomy_id=tt.term_taxonomy_id"
         cursor = mysql_cnx.cursor()
@@ -357,62 +358,22 @@ class Command(BaseCommand) :
     ########
     #HELPERS
 
+    def _post_content_type(self, post_type):
+        return ContentType.objects.get(model=post_type)
+
     def _post_type_ids(self, post_type):
-        """Returns the IDs of wp_posts of the given type.
-           Type can be 'post', 'page' or 'attachment'."""
-        if post_type == 'post':
-            post_ids = [article.id for article in Article.objects.all()]
-        elif post_type == 'page':
-            post_ids = [page.id for page in StaticPage.objects.all()]
-        elif post_type == 'picture':
-            post_ids = [picture.id for picture in Picture.objects.all()]
-        elif post_type == 'document':
-            post_ids = [document.id for document in Document.objects.all()]
-        elif post_type == 'regular_file':
-            post_ids = [regular_file.id for regular_file in RegularFile.objects.all()]
-        #TODO soundtrack, video...
+        post_ids = [object.id for object in self._post_content_type(post_type).get_all_objects_for_this_type()]        
         return tuple(post_ids)
 
-    def _post_content_type(self, post_type):
-        if post_type == 'post':
-            return ContentType.objects.get(app_label="articles", model="article")
-        elif post_type == 'page':
-            return ContentType.objects.get(app_label="staticpages", model="staticpage")
-        elif post_type == 'picture':
-            return ContentType.objects.get(app_label="medialibrary", model="picture")
-        elif post_type == 'document':
-            return ContentType.objects.get(app_label="medialibrary", model="document")
-        elif post_type == 'regular_file':
-            return ContentType.objects.get(app_label="medialibrary", model="regularfile")
-        #TODO soundtrack, video...
-
-    def _object_type_ids(self):
-        #wp terms relate to posts, which are cyclope's articles, staticpages or attachments
-        article_type_id = self._post_content_type('post').id
-        page_type_id = self._post_content_type('page').id
-        picture_type_id = self._post_content_type('picture').id
-        document_type_id = self._post_content_type('document').id
-        regular_file_type_id = self._post_content_type('regular_file').id
-        #comming from the same tables, their IDs shouldn't intersect
-        article_ids = [article.id for article in Article.objects.all()]
-        page_ids = [page.id for page in StaticPage.objects.all()]
-        picture_ids = [picture.id for picture in Picture.objects.all()]
-        document_ids = [document.id for document in Document.objects.all()]
-        file_ids = [regular_file.id for regular_file in RegularFile.objects.all()]
-        return {
-            article_type_id: article_ids, 
-            page_type_id: page_ids, 
-            picture_type_id: picture_ids, 
-            document_type_id: document_ids, 
-            regular_file_type_id: file_ids
-        }
-
-    #TODO MIME <-> ContentType hash table    
-    def _post_type_to_mime(self, post_type):
-        if post_type == 'picture' : return ('image/png', 'image/gif')#TODO...
-        elif post_type == 'document' : return ('application/pdf',)
-        elif post_type == 'regular_file' : return ('application/xml') #zip... TODO wildcard?
-        #TODO ...
+    #wp terms relate to posts, which are cyclope's articles, staticpages or attachments
+    #comming from the same tables, their IDs shouldn't intersect
+    def _object_type_ids(self, post_types):
+        result = {}                
+        for post_type in post_types:
+            content_type_id = self._post_content_type(post_type).id
+            object_ids = self._post_type_ids(post_type)
+            result[content_type_id] = object_ids
+        return result
 
     ###################
     #OBJECT CONVERSIONS
