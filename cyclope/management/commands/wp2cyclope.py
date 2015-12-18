@@ -12,6 +12,7 @@ from cyclope.apps.custom_comments.models import CustomComment
 from django.contrib.auth.models import User
 from cyclope.core.collections.models import Collection, Category, Categorization
 from cyclope.apps.medialibrary.models import ExternalContent, Picture, Document, RegularFile, BaseMedia, SoundTrack, MovieClip, FlashMovie
+from django.conf import settings as _settings
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -63,6 +64,7 @@ class Command(BaseCommand) :
     # class constants
     wp_prefix = 'wp_'
     wp_user_password = None
+    wp_upload_path = None
 
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
@@ -170,7 +172,7 @@ class Command(BaseCommand) :
 
     def _fetch_site_settings(self, mysql_cnx):
         """Execute single query to WP _options table to retrieve the given option names."""
-        options = ('siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify')
+        options = ('siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify', 'upload_path')
         #also could check comment_registration, users_can_register, blog_public
         #single query
         query = "SELECT option_name, option_value FROM "+self.wp_prefix+"options WHERE option_name IN {}".format(options)
@@ -192,10 +194,12 @@ class Command(BaseCommand) :
         settings.enable_comments_notifications = wp_options['comments_notify'] in ('', 1) #default True
         settings.show_author = 'USER' # WP uses users as authors
         site.name = wp_options['blogname']
-        site.domain = wp_options['siteurl']#TODO strip http:// 
+        site.domain = wp_options['siteurl'].replace("http://","")
         site.save()
         settings.site = site
         settings.save()
+        #
+        if wp_options['upload_path'] != '' : self.wp_upload_path = wp_options['upload_path']
         return settings
 
     def _fetch_articles(self, mysql_cnx):
@@ -367,6 +371,12 @@ class Command(BaseCommand) :
             object_ids = tuple([object.id for object in content_type.get_all_objects_for_this_type()])
             result[content_type.id] = object_ids
         return result
+
+    def _parse_media_url(self, url):
+        #https://codex.wordpress.org/Determining_Plugin_and_Content_Directories
+        wp_dir = self.wp_upload_path if self.wp_upload_path else "wp-content/uploads"
+        cyc_dir = "uploads/" #TODO _settings.STATIC_URL?
+        return cyc_dir+url.split(wp_dir)[1]
 
     ###################
     #OBJECT CONVERSIONS
@@ -554,7 +564,7 @@ class Command(BaseCommand) :
             #source
             description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
             #Picture
-            image = post['guid']#TODO PARSE http://www.numerica.cl/wp-content/uploads/2014/05/numerik.png to FileBrowseField...
+            image = self._parse_media_url(post['guid'])
         )
 
     def _wp_post_to_document(self, post):
@@ -572,7 +582,7 @@ class Command(BaseCommand) :
             #BaseMedia                
             description = post['post_content'] or post['post_excerpt'], # see Picture
             #Document
-            document = post['guid']#TODO PARSE to FileBrowseField...
+            document = self._parse_media_url(post['guid'])
             #image will be None
         )
 
@@ -591,7 +601,7 @@ class Command(BaseCommand) :
             #BaseMedia                
             description = post['post_content'] or post['post_excerpt'], # see Picture
             #Document
-            file = post['guid']#TODO PARSE to FileBrowseField...
+            file = self._parse_media_url(post['guid'])
             #image will be None
         )
 
@@ -613,7 +623,7 @@ class Command(BaseCommand) :
             #source
             description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
             #Picture
-            audio = post['guid']#TODO PARSE
+            audio = self._parse_media_url(post['guid'])
         )
     def _wp_post_to_movie_clip(self, post):
         return MovieClip(
@@ -633,7 +643,7 @@ class Command(BaseCommand) :
             #source
             description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
             #Picture
-            video = post['guid']#TODO PARSE
+            video = self._parse_media_url(post['guid'])
         )
     def _wp_post_to_flash_movie(self, post):
         return FlashMovie(
@@ -653,6 +663,6 @@ class Command(BaseCommand) :
             #source
             description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
             #Picture
-            flash = post['guid']#TODO PARSE
+            flash = self._parse_media_url(post['guid'])
         )
 
