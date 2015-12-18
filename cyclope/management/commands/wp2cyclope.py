@@ -511,66 +511,86 @@ class Command(BaseCommand) :
 
     #TODO post_parent can be used for RelatedContents?
     def _post_to_attachment(self, post):
-        if post['post_mime_type'] in ('image/png', 'image/jpeg', 'image/gif'):#TODO image/*
-            return Picture(
-                #BaseContent
-                id = post['ID'],
-                name = post['post_title'],
-                #slug is post_name
-                published = post['post_status']=='publish',
-                user_id = post['post_author'],
-                #related_contents
-                creation_date = post['post_date'],
-                modification_date = post['post_modified'],
-                allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article 
-                #comments
-                show_author = 'USER',
-                #BaseMedia                
-                #author
-                #source
-                description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
-                #Picture
-                image = post['guid']#TODO PARSE http://www.numerica.cl/wp-content/uploads/2014/05/numerik.png to FileBrowseField...
-            )
-        elif post['post_mime_type'] in ('application/pdf',):
-            return Document(
-                #BaseContent
-                id = post['ID'],
-                name = post['post_title'],
-                #slug is post_name
-                published = post['post_status']=='publish',
-                user_id = post['post_author'],
-                creation_date = post['post_date'],
-                modification_date = post['post_modified'],
-                allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article
-                show_author = 'USER',
-                #BaseMedia                
-                description = post['post_content'] or post['post_excerpt'], # see Picture
-                #Document
-                document = post['guid']#TODO PARSE to FileBrowseField...
-                #image will be None
-            )
-        else:
-            return RegularFile(
-                #BaseContent
-                id = post['ID'],
-                name = post['post_title'],
-                #slug is post_name
-                published = post['post_status']=='publish',
-                user_id = post['post_author'],
-                creation_date = post['post_date'],
-                modification_date = post['post_modified'],
-                allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',# see _post_to_article
-                show_author = 'USER',
-                #BaseMedia                
-                description = post['post_content'] or post['post_excerpt'], # see Picture
-                #Document
-                file = post['guid']#TODO PARSE to FileBrowseField...
-                #image will be None
-            )
-        #TODO elif...
-            #SoundTrack
-            #MovieClip
-            #FlashMovie
-        #MIME top level Media Types : application, audio, example, image, message, model, multipart, text, video
-        #https://en.wikipedia.org/wiki/Media_type
+        #http://www.iana.org/assignments/media-types/media-types.xhtml#examples
+        #top level media types : image, audio, video, application, multipart, text
+        #unused: example, message, model,
+        top_level_mime, mime_type = tuple(post['post_mime_type'].split('/'))
+        if  top_level_mime == 'image':
+            return self._wp_post_to_picture(post)
+        #TODO
+        #elif  top_level_mime == 'audio':             #SoundTrack
+        #elif  top_level_mime == 'video':              
+        #    if mime_type == 'x-flv': #FlashMovie
+        #    else: #MovieClip
+        elif top_level_mime == 'application':
+            if mime_type == 'pdf' : 
+                return self._wp_post_to_document(post)
+            #elif mime_type == 'x-shockwave-flash' : #FlashMovie
+            else :
+                return self._wp_post_to_regular_file(post)
+        #elif top_level_mime == 'text':
+        #    return self._wp_post_to_document(post) TODO difference between document & regular file?
+        else: #multipart, example, message, model
+            return self._wp_post_to_regular_file(post)
+
+    def _wp_post_to_picture(self, post):
+        return Picture(
+            #BaseContent
+            id = post['ID'],
+            name = post['post_title'],
+            #slug is post_name
+            published = post['post_status']=='publish',
+            user_id = post['post_author'],
+            #related_contents
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article 
+            #comments
+            show_author = 'USER',
+            #BaseMedia                
+            #author
+            #source
+            description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
+            #Picture
+            image = post['guid']#TODO PARSE http://www.numerica.cl/wp-content/uploads/2014/05/numerik.png to FileBrowseField...
+        )
+
+    def _wp_post_to_document(self, post):
+        return Document(
+            #BaseContent
+            id = post['ID'],
+            name = post['post_title'],
+            #slug is post_name
+            published = post['post_status']=='publish',
+            user_id = post['post_author'],
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article
+            show_author = 'USER',
+            #BaseMedia                
+            description = post['post_content'] or post['post_excerpt'], # see Picture
+            #Document
+            document = post['guid']#TODO PARSE to FileBrowseField...
+            #image will be None
+        )
+
+    def _wp_post_to_regular_file(self, post):
+        return RegularFile(
+            #BaseContent
+            id = post['ID'],
+            name = post['post_title'],
+            #slug is post_name
+            published = post['post_status']=='publish',
+            user_id = post['post_author'],
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',# see _post_to_article
+            show_author = 'USER',
+            #BaseMedia                
+            description = post['post_content'] or post['post_excerpt'], # see Picture
+            #Document
+            file = post['guid']#TODO PARSE to FileBrowseField...
+            #image will be None
+        )
+
+
