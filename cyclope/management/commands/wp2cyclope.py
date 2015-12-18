@@ -289,7 +289,7 @@ class Command(BaseCommand) :
                 comment.save()
             transaction.commit()
             transaction.leave_transaction_management()
-            counter += cursor.rowcount
+            if cursor.rowcount > 0 : counter += cursor.rowcount
             cursor.close()
         return counter
 
