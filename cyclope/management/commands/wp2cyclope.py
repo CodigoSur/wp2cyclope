@@ -122,7 +122,7 @@ class Command(BaseCommand) :
         # MediaLibrary <- wp_posts
         attachments_count, pictures_count, documents_count, files_count, sound_count, movie_count, flash_count, related_count = self._fetch_attachments(cnx, object_type_ids)
         print "-> migrated {} pictures, {} documents, {} regular files, {} sound tracks and {} movies out of {} attachments".format(pictures_count, documents_count, files_count, sound_count, (movie_count+flash_count), attachments_count)
-        print "-> related {} attachments to their posts or pages as related contents".format(related_count)
+        print "-> related {} attachments to their posts or pages as related contents".format(related_count/2)
 
         #with complete the ID type matrix with attachments in order to associate all types comments and categories
         attachment_content_types = ('picture', 'document', 'regularfile', 'flashmovie', 'movieclip', 'soundtrack')
@@ -272,9 +272,10 @@ class Command(BaseCommand) :
             post = dict(zip(fields, wp_post))
             attachment = self._post_to_attachment(post)
             attachment.save() #whatever its type
-            if post['post_parent']!=0:
-                related_content = self._relate_contents(attachment, post['post_parent'], object_type_ids)
-                related_content.save()
+            if post['post_parent'] != 0 :
+                relate_self, relate_other = self._relate_contents(attachment, post['post_parent'], object_type_ids)
+                relate_self.save() #related contents
+                relate_other.save()
         transaction.commit()
         transaction.leave_transaction_management()
         counts = (cursor.rowcount, Picture.objects.count(), Document.objects.count(), RegularFile.objects.count(), SoundTrack.objects.count(), MovieClip.objects.count(), FlashMovie.objects.count(), RelatedContent.objects.count())
@@ -691,9 +692,16 @@ class Command(BaseCommand) :
         )
 
     def _relate_contents(self, attachment, other_id, object_type_ids):
-        return RelatedContent(
+        one_way = RelatedContent(
             self_object = attachment,
             other_type_id = self._get_object_type(object_type_ids, other_id, ''),#article or page
             other_id = other_id
             #order null       
         )
+        the_other = RelatedContent(
+            other_object = attachment,
+            self_type_id = self._get_object_type(object_type_ids, other_id, ''),#article or page
+            self_id = other_id
+            #order null       
+        )
+        return (one_way, the_other)
