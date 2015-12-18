@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 from optparse import make_option
 import mysql.connector
-from cyclope.models import SiteSettings
+from cyclope.models import SiteSettings, RelatedContent
 import re
 from cyclope.apps.articles.models import Article
 from django.contrib.sites.models import Site
@@ -115,13 +115,18 @@ class Command(BaseCommand) :
         ex_content_count, wp_links_count = self._fetch_links(cnx)
         print "-> migrated {} external contents out of {} links".format(ex_content_count, wp_links_count)
 
-        # MediaLibrary <- wp_posts
-        attachments_count, pictures_count, documents_count, files_count, sound_count, movie_count, flash_count = self._fetch_attachments(cnx)
-        print "-> migrated {} pictures, {} documents, {} regular files, {} sound tracks and {} movies out of {} attachments".format(pictures_count, documents_count, files_count, sound_count, (movie_count+flash_count), attachments_count)
-
-        #with all our objects populated, we query their IDs by content type only once to associate their objects comments and categories
-        post_content_types = ('article', 'staticpage', 'picture', 'document', 'regularfile', 'flashmovie', 'movieclip', 'soundtrack')
+        #we query article and page IDs to be able to resolve an ID's content type for related contents
+        post_content_types = ('article', 'staticpage')
         object_type_ids = self._object_type_ids(post_content_types)
+
+        # MediaLibrary <- wp_posts
+        attachments_count, pictures_count, documents_count, files_count, sound_count, movie_count, flash_count, related_count = self._fetch_attachments(cnx, object_type_ids)
+        print "-> migrated {} pictures, {} documents, {} regular files, {} sound tracks and {} movies out of {} attachments".format(pictures_count, documents_count, files_count, sound_count, (movie_count+flash_count), attachments_count)
+        print "-> related {} attachments to their posts or pages as related contents".format(related_count)
+
+        #with complete the ID type matrix with attachments in order to associate all types comments and categories
+        attachment_content_types = ('picture', 'document', 'regularfile', 'flashmovie', 'movieclip', 'soundtrack')
+        object_type_ids.update(self._object_type_ids(attachment_content_types))
 
         # Comments <- wp_comments
         comments_count = self._fetch_comments(cnx, settings.site, object_type_ids)
@@ -250,9 +255,9 @@ class Command(BaseCommand) :
         cursor.close()
         return counts 
 
-    def _fetch_attachments(self, mysql_cnx):
+    def _fetch_attachments(self, mysql_cnx, object_type_ids):
         """Queries to WP posts table selecting attachments, not..."""
-        fields = ('ID', 'post_mime_type', 'guid', 'post_title', 'post_status', 'post_author', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt')
+        fields = ('ID', 'post_mime_type', 'guid', 'post_title', 'post_status', 'post_author', 'post_date', 'post_modified', 'comment_status', 'post_content', 'post_excerpt', 'post_parent')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='attachment'"
         cursor = mysql_cnx.cursor()
         cursor.execute(query)
@@ -260,11 +265,15 @@ class Command(BaseCommand) :
         transaction.enter_transaction_management()
         transaction.managed(True)
         for wp_post in cursor :
-            attachment = self._post_to_attachment(dict(zip(fields, wp_post)))
-            attachment.save() #whatever its type 
+            post = dict(zip(fields, wp_post))
+            attachment = self._post_to_attachment(post)
+            attachment.save() #whatever its type
+            if post['post_parent']!=0:
+                related_content = self._relate_contents(attachment, post['post_parent'], object_type_ids)
+                related_content.save()
         transaction.commit()
         transaction.leave_transaction_management()
-        counts = (cursor.rowcount, Picture.objects.count(), Document.objects.count(), RegularFile.objects.count(), SoundTrack.objects.count(), MovieClip.objects.count(), FlashMovie.objects.count())
+        counts = (cursor.rowcount, Picture.objects.count(), Document.objects.count(), RegularFile.objects.count(), SoundTrack.objects.count(), MovieClip.objects.count(), FlashMovie.objects.count(), RelatedContent.objects.count())
         cursor.close()
         return counts
 
@@ -382,6 +391,16 @@ class Command(BaseCommand) :
             result[content_type.id] = object_ids
         return result
 
+    # term taxonomies relate to posts which we have created as articles, static pages and attachments
+    # only the taxonomy link_category relates to links
+    def _get_object_type(self, object_type_ids, object_id, taxonomy):
+        if taxonomy != 'link_category':
+            for item in object_type_ids.items(): 
+                if object_id in item[1]:
+                    return item[0]
+        else:
+            return ContentType.objects.get(name='external content').id # links
+
     def _parse_media_url(self, url):
         #https://codex.wordpress.org/Determining_Plugin_and_Content_Directories
         wp_dir = self.wp_upload_path if self.wp_upload_path else "wp-content/uploads"
@@ -494,16 +513,7 @@ class Command(BaseCommand) :
         )
 
     def _wp_term_relationship_to_categorization(self, term_relationship, object_type_ids):
-        # term taxonomies relate to posts which we have created as articles, static pages and attachments
-        # only the taxonomy link_category relates to links
-        def _get_object_type(object_type_ids, object_id, taxonomy):
-            if taxonomy != 'link_category':
-                for item in object_type_ids.items(): 
-                    if object_id in item[1]:
-                        return item[0]
-            else:
-                return ContentType.objects.get(name='external content').id # links
-        content_type_id = _get_object_type(object_type_ids, term_relationship['tr.object_id'], term_relationship['tt.taxonomy'])
+        content_type_id = self._get_object_type(object_type_ids, term_relationship['tr.object_id'], term_relationship['tt.taxonomy'])
         return Categorization(
             category_id = term_relationship['tt.term_id'],
             content_type_id = content_type_id,
@@ -547,7 +557,7 @@ class Command(BaseCommand) :
             if mime_type == 'pdf' : 
                 return self._wp_post_to_document(post)
             elif mime_type == 'x-shockwave-flash' : 
-                return self._wp_post_to_flash_movie(post)#FlashMovie
+                return self._wp_post_to_flash_movie(post)
             else :
                 return self._wp_post_to_regular_file(post)
         elif top_level_mime == 'text':
@@ -676,3 +686,10 @@ class Command(BaseCommand) :
             flash = self._parse_media_url(post['guid'])
         )
 
+    def _relate_contents(self, attachment, other_id, object_type_ids):
+        return RelatedContent(
+            self_object = attachment,
+            other_type_id = self._get_object_type(object_type_ids, other_id, ''),#article or page
+            other_id = other_id
+            #order null       
+        )
