@@ -57,7 +57,12 @@ class Command(BaseCommand) :
             action='store',
             dest='wp_user_password',
             default=None,
-            help='Default password for ALL users. Optional, otherwise username will be used.s'
+            help='Default password for ALL users. Optional, otherwise usernames will be used.'
+        ),
+        make_option('--devel',
+            action='store_false',
+            dest='devel',
+            help='Use http://localhost:8000 as site url (development)'
         ),
     )
 
@@ -65,6 +70,7 @@ class Command(BaseCommand) :
     wp_prefix = 'wp_'
     wp_user_password = None
     wp_upload_path = None
+    devel_url = False
 
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
@@ -75,7 +81,8 @@ class Command(BaseCommand) :
 
         self.wp_prefix = options['wp_prefix']
         self.wp_user_password = options['wp_user_password']
-        
+        self.devel_url = options['devel']        
+
         print "-> clearing cyclope sqlite database..."
         self._clear_cyclope_db()
         
@@ -194,7 +201,10 @@ class Command(BaseCommand) :
         settings.enable_comments_notifications = wp_options['comments_notify'] in ('', 1) #default True
         settings.show_author = 'USER' # WP uses users as authors
         site.name = wp_options['blogname']
-        site.domain = wp_options['siteurl'].replace("http://","")
+        if not self.devel_url:
+            site.domain = wp_options['siteurl'].replace("http://","")
+        else:
+            site.domain = "localhost:8000"
         site.save()
         settings.site = site
         settings.save()
