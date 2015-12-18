@@ -60,7 +60,7 @@ class Command(BaseCommand) :
         ),
     )
 
-    # class constant
+    # class constants
     wp_prefix = 'wp_'
     wp_user_password = None
 
@@ -110,14 +110,18 @@ class Command(BaseCommand) :
         attachments_count, pictures_count, documents_count, files_count = self._fetch_attachments(cnx)
         print "-> migrated {} pictures, {} documents, {} regular files out of {} attachments".format(pictures_count, documents_count, files_count, attachments_count)
 
+        #with all our objects populated, we query their IDs by content type only once to associate their objects comments and categories
+        post_content_types = ('article', 'staticpage', 'picture', 'document', 'regularfile') # TODO soundtracks, videos, etc.
+        object_type_ids = self._object_type_ids(post_content_types)
+
         # Comments <- wp_comments
-        comments_count = self._fetch_comments(cnx, settings.site)
+        comments_count = self._fetch_comments(cnx, settings.site, object_type_ids)
         print "-> migrated {} comments".format(comments_count)
 
         # Collections & Categories <- WP terms & term_taxonomies
-        collection_counts, category_count, wp_term_taxonomy_count, categorizations_count = self._fetch_term_taxonomies(cnx)
+        collection_counts, category_count, wp_term_taxonomy_count, categorizations_count = self._fetch_term_taxonomies(cnx, object_type_ids)
         print "-> migrated {} collections and {} categories out of {} term taxonomies".format(collection_counts, category_count, wp_term_taxonomy_count)
-        print "-> categorized {} articles, pages & links...".format(categorizations_count)
+        print "-> categorized {} articles, pages, links & attachments".format(categorizations_count)
 
         #close mysql connection
         cnx.close()
@@ -250,17 +254,14 @@ class Command(BaseCommand) :
         cursor.close()
         return counts
 
-    def _fetch_comments(self, mysql_cnx, site):
+    def _fetch_comments(self, mysql_cnx, site, object_type_ids):
         """Populates cyclope custom comments from WP table wp_comments.
            instead of querying the related object for each comment and atomizing transactions, which could be expensive,
            we use an additional query for each content type only, and the transaction is repeated just as many times.
            we receive Site ID which is already above in the script."""
         fields = ('comment_ID', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
-        post_types_with_comments = ('article', 'staticpage', 'picture', 'document', 'regularfile') # TODO soundtracks, videos, etc.
         counter = 0
-        for post_type in post_types_with_comments:
-            post_ids = self._post_type_ids(post_type)
-            content_type = self._post_content_type(post_type)
+        for content_type_id, post_ids in object_type_ids.iteritems():
             query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam' AND comment_post_ID IN {}".format(post_ids)
             cursor = mysql_cnx.cursor()
             cursor.execute(query)
@@ -269,7 +270,7 @@ class Command(BaseCommand) :
             transaction.managed(True)
             for wp_comment in cursor:
                 comment_hash = dict(zip(fields,wp_comment))
-                comment = self._wp_comment_to_custom(comment_hash, site, content_type)
+                comment = self._wp_comment_to_custom(comment_hash, site, content_type_id)
                 comment.save()
             transaction.commit()
             transaction.leave_transaction_management()
@@ -292,7 +293,7 @@ class Command(BaseCommand) :
         cursor.close()
         return counts
 
-    def _fetch_term_taxonomies(self, mysql_cnx):
+    def _fetch_term_taxonomies(self, mysql_cnx, object_type_ids):
         """Creates a Collection from each of the taxonomies in the term_taxonomy table. (taxonomy is a column)
            Creates a Category for each Term. The relation with its collection is inferred from the taxonomy value.
            Creates Categorizations to link objects to its Categories reading the term_relationships table.
@@ -323,8 +324,6 @@ class Command(BaseCommand) :
         cursor.close()
         Category.objects.bulk_create(categories)
         #Cyclope categorizations are WP term relationships
-        post_types = ('article', 'staticpage', 'picture', 'document', 'regularfile') # TODO soundtracks, videos, etc.
-        object_type_ids = self._object_type_ids(post_types)#by this time posts are already created in our db
         fields = ('tr.object_id', 'tr.term_taxonomy_id', 'tt.term_id', 'tt.taxonomy', 'tr.term_order')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"term_taxonomy tt INNER JOIN "+self.wp_prefix+"term_relationships tr ON tr.term_taxonomy_id=tt.term_taxonomy_id"
         cursor = mysql_cnx.cursor()
@@ -358,21 +357,14 @@ class Command(BaseCommand) :
     ########
     #HELPERS
 
-    def _post_content_type(self, post_type):
-        return ContentType.objects.get(model=post_type)
-
-    def _post_type_ids(self, post_type):
-        post_ids = [object.id for object in self._post_content_type(post_type).get_all_objects_for_this_type()]        
-        return tuple(post_ids)
-
     #wp terms relate to posts, which are cyclope's articles, staticpages or attachments
-    #comming from the same tables, their IDs shouldn't intersect
-    def _object_type_ids(self, post_types):
+    #comming from the same table, their IDs shouldn't intersect
+    def _object_type_ids(self, post_content_types):
         result = {}                
-        for post_type in post_types:
-            content_type_id = self._post_content_type(post_type).id
-            object_ids = self._post_type_ids(post_type)
-            result[content_type_id] = object_ids
+        for post_content_type in post_content_types:
+            content_type = ContentType.objects.get(model=post_content_type)
+            object_ids = tuple([object.id for object in content_type.get_all_objects_for_this_type()])
+            result[content_type.id] = object_ids
         return result
 
     ###################
@@ -417,13 +409,13 @@ class Command(BaseCommand) :
             show_author = 'USER' #default SITE doesn't work when site sets USER
         )
 
-    def _wp_comment_to_custom(self, comment, site, content_type):
+    def _wp_comment_to_custom(self, comment, site, content_type_id):
         comment_parent = comment['comment_parent'] if comment['comment_parent']!=0 else None
         #tree_path and last_child_id are automagically set by threadedcomments framework
         return CustomComment(
             id = comment['comment_ID'],
             object_pk = comment['comment_post_ID'],
-            content_type = content_type,
+            content_type_id = content_type_id,
             site = site,
             user_name = comment['comment_author'],
             user_email = comment['comment_author_email'],
@@ -484,15 +476,14 @@ class Command(BaseCommand) :
     def _wp_term_relationship_to_categorization(self, term_relationship, object_type_ids):
         # term taxonomies relate to posts which we have created as articles, static pages and attachments
         # only the taxonomy link_category relates to links
-        def _get_object_type(object_type_ids, object_id, taxonomy, external_content_type_id):
+        def _get_object_type(object_type_ids, object_id, taxonomy):
             if taxonomy != 'link_category':
                 for item in object_type_ids.items(): 
                     if object_id in item[1]:
                         return item[0]
             else:
-                return external_content_type_id # single query...
-        external_content_type_id = ContentType.objects.get(name='external content').id # links
-        content_type_id = _get_object_type(object_type_ids, term_relationship['tr.object_id'], term_relationship['tt.taxonomy'], external_content_type_id)
+                return ContentType.objects.get(name='external content').id # links
+        content_type_id = _get_object_type(object_type_ids, term_relationship['tr.object_id'], term_relationship['tt.taxonomy'])
         return Categorization(
             category_id = term_relationship['tt.term_id'],
             content_type_id = content_type_id,
