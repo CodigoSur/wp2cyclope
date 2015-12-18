@@ -60,7 +60,7 @@ class Command(BaseCommand) :
             help='Default password for ALL users. Optional, otherwise usernames will be used.'
         ),
         make_option('--devel',
-            action='store_false',
+            action='store_true',
             dest='devel',
             help='Use http://localhost:8000 as site url (development)'
         ),
@@ -178,6 +178,10 @@ class Command(BaseCommand) :
         Picture.objects.all().delete()
         Document.objects.all().delete()
         RegularFile.objects.all().delete()
+        SoundTrack.objects.all().delete()
+        MovieClip.objects.all().delete()
+        FlashMovie.objects.all().delete()
+        RelatedContent.objects.all().delete()
 
     ########
     #QUERIES
