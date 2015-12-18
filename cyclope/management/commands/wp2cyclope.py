@@ -11,7 +11,7 @@ from django.contrib.contenttypes.models import ContentType
 from cyclope.apps.custom_comments.models import CustomComment
 from django.contrib.auth.models import User
 from cyclope.core.collections.models import Collection, Category, Categorization
-from cyclope.apps.medialibrary.models import ExternalContent, Picture, Document, RegularFile, BaseMedia
+from cyclope.apps.medialibrary.models import ExternalContent, Picture, Document, RegularFile, BaseMedia, SoundTrack, MovieClip, FlashMovie
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -107,11 +107,11 @@ class Command(BaseCommand) :
         print "-> migrated {} external contents out of {} links".format(ex_content_count, wp_links_count)
 
         # MediaLibrary <- wp_posts
-        attachments_count, pictures_count, documents_count, files_count = self._fetch_attachments(cnx)
-        print "-> migrated {} pictures, {} documents, {} regular files out of {} attachments".format(pictures_count, documents_count, files_count, attachments_count)
+        attachments_count, pictures_count, documents_count, files_count, sound_count, movie_count, flash_count = self._fetch_attachments(cnx)
+        print "-> migrated {} pictures, {} documents, {} regular files, {} sound tracks and {} movies out of {} attachments".format(pictures_count, documents_count, files_count, sound_count, (movie_count+flash_count), attachments_count)
 
         #with all our objects populated, we query their IDs by content type only once to associate their objects comments and categories
-        post_content_types = ('article', 'staticpage', 'picture', 'document', 'regularfile') # TODO soundtracks, videos, etc.
+        post_content_types = ('article', 'staticpage', 'picture', 'document', 'regularfile', 'flashmovie', 'movieclip', 'soundtrack')
         object_type_ids = self._object_type_ids(post_content_types)
 
         # Comments <- wp_comments
@@ -250,7 +250,7 @@ class Command(BaseCommand) :
             attachment.save() #whatever its type 
         transaction.commit()
         transaction.leave_transaction_management()
-        counts = (cursor.rowcount, Picture.objects.count(), Document.objects.count(), RegularFile.objects.count())#TODO SoundTrack, MovieClips, etc
+        counts = (cursor.rowcount, Picture.objects.count(), Document.objects.count(), RegularFile.objects.count(), SoundTrack.objects.count(), MovieClip.objects.count(), FlashMovie.objects.count())
         cursor.close()
         return counts
 
@@ -262,6 +262,7 @@ class Command(BaseCommand) :
         fields = ('comment_ID', 'comment_author', 'comment_author_email', 'comment_author_url', 'comment_content', 'comment_date', 'comment_author_IP', 'comment_approved', 'comment_parent', 'user_id', 'comment_post_ID')
         counter = 0
         for content_type_id, post_ids in object_type_ids.iteritems():
+            if len(post_ids) == 0 : continue
             query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"comments WHERE comment_approved!='spam' AND comment_post_ID IN {}".format(post_ids)
             cursor = mysql_cnx.cursor()
             cursor.execute(query)
@@ -517,19 +518,22 @@ class Command(BaseCommand) :
         top_level_mime, mime_type = tuple(post['post_mime_type'].split('/'))
         if  top_level_mime == 'image':
             return self._wp_post_to_picture(post)
-        #TODO
-        #elif  top_level_mime == 'audio':             #SoundTrack
-        #elif  top_level_mime == 'video':              
-        #    if mime_type == 'x-flv': #FlashMovie
-        #    else: #MovieClip
+        elif  top_level_mime == 'audio':
+            return self._wp_post_to_sound_track(post)
+        elif  top_level_mime == 'video':              
+            if mime_type == 'x-flv': 
+                return self._wp_post_to_flash_movie(post)
+            else:
+                return self._wp_post_to_movie_clip(post)
         elif top_level_mime == 'application':
             if mime_type == 'pdf' : 
                 return self._wp_post_to_document(post)
-            #elif mime_type == 'x-shockwave-flash' : #FlashMovie
+            elif mime_type == 'x-shockwave-flash' : 
+                return self._wp_post_to_flash_movie(post)#FlashMovie
             else :
                 return self._wp_post_to_regular_file(post)
-        #elif top_level_mime == 'text':
-        #    return self._wp_post_to_document(post) TODO difference between document & regular file?
+        elif top_level_mime == 'text':
+            return self._wp_post_to_document(post) #TODO difference between document & regular file?
         else: #multipart, example, message, model
             return self._wp_post_to_regular_file(post)
 
@@ -593,4 +597,64 @@ class Command(BaseCommand) :
             #image will be None
         )
 
+    def _wp_post_to_sound_track(self, post):
+        return SoundTrack(
+            #BaseContent
+            id = post['ID'],
+            name = post['post_title'],
+            #slug is post_name
+            published = post['post_status']=='publish',
+            user_id = post['post_author'],
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article 
+            #comments
+            show_author = 'USER',
+            #BaseMedia                
+            #author
+            #source
+            description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
+            #Picture
+            audio = post['guid']#TODO PARSE
+        )
+    def _wp_post_to_movie_clip(self, post):
+        return MovieClip(
+            #BaseContent
+            id = post['ID'],
+            name = post['post_title'],
+            #slug is post_name
+            published = post['post_status']=='publish',
+            user_id = post['post_author'],
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article 
+            #comments
+            show_author = 'USER',
+            #BaseMedia                
+            #author
+            #source
+            description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
+            #Picture
+            video = post['guid']#TODO PARSE
+        )
+    def _wp_post_to_flash_movie(self, post):
+        return FlashMovie(
+            #BaseContent
+            id = post['ID'],
+            name = post['post_title'],
+            #slug is post_name
+            published = post['post_status']=='publish',
+            user_id = post['post_author'],
+            creation_date = post['post_date'],
+            modification_date = post['post_modified'],
+            allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',#see _post_to_article 
+            #comments
+            show_author = 'USER',
+            #BaseMedia                
+            #author
+            #source
+            description = post['post_content'] or post['post_excerpt'], #if both are present excerpt will be lost, doesn't happen in Numerica
+            #Picture
+            flash = post['guid']#TODO PARSE
+        )
 
