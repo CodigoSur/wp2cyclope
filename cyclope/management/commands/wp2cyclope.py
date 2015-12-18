@@ -171,7 +171,7 @@ class Command(BaseCommand) :
     def _fetch_site_settings(self, mysql_cnx):
         """Execute single query to WP _options table to retrieve the given option names."""
         options = ('siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify')
-        #TODO comment_registration, users_can_register, blog_public
+        #also could check comment_registration, users_can_register, blog_public
         #single query
         query = "SELECT option_name, option_value FROM "+self.wp_prefix+"options WHERE option_name IN {}".format(options)
         cursor = mysql_cnx.cursor()
@@ -390,9 +390,9 @@ class Command(BaseCommand) :
             allow_comments = 'SITE' if post['comment_status']!='closed' else 'NO',
             summary = post['post_excerpt'],
             #pretitle has no equivalent in WP
-            #TODO #FKs: comments related_contents picture author source
+            # check comments related_contents picture author source
             user_id = post['post_author'], # WP referential integrity maintained
-            show_author = 'USER' #TODO default SITE doesn't work when site sets USER
+            show_author = 'USER' #default SITE doesn't work when site sets USER
         )
 
     def _post_to_static_page(self, post):
@@ -403,9 +403,9 @@ class Command(BaseCommand) :
             creation_date = post['post_date'],
             modification_date = post['post_modified'],
             published = post['post_status']=='publish',#private and draft are unpublished
-            allow_comments = post['comment_status']=='open',#TODO see article's allow_comments
+            allow_comments = post['comment_status']=='open',#see article's allow_comments
             summary = post['post_excerpt'],
-            #TODO related_contents comments
+            #check related_contents comments
             user_id = post['post_author'], # WP referential integrity maintained
             show_author = 'USER' #default SITE doesn't work when site sets USER
         )
@@ -426,8 +426,7 @@ class Command(BaseCommand) :
             ip_address = comment['comment_author_IP'],
             ## WP referential integrity maintained, check why N's comments aren't all referenced
             user_id = comment['user_id'] if comment['user_id']!=0 else None,
-            #TODO
-            #is_public          comment_approved
+            #is_public          comment_approved    TODO
             #is_removed         ..
             parent_id = comment_parent,
             subscribe = True #TODO Site default?
@@ -456,7 +455,7 @@ class Command(BaseCommand) :
     def _wp_term_taxonomy_to_collection(self, taxonomy):
         return Collection(
             name = taxonomy,#everything else to defaults
-            #TODO check content_types, default_list_views, view_options
+            #check content_types, default_list_views, view_options
         )
 
     def _wp_term_to_category(self, term_taxonomy, collection_ids):
@@ -513,8 +512,7 @@ class Command(BaseCommand) :
     #TODO post_parent can be used for RelatedContents?
     def _post_to_attachment(self, post):
         #http://www.iana.org/assignments/media-types/media-types.xhtml#examples
-        #top level media types : image, audio, video, application, multipart, text
-        #unused: example, message, model,
+        #top level media types : image, audio, video, application, multipart, text, example, message, model
         top_level_mime, mime_type = tuple(post['post_mime_type'].split('/'))
         if  top_level_mime == 'image':
             return self._wp_post_to_picture(post)
