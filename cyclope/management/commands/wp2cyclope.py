@@ -69,8 +69,9 @@ class Command(BaseCommand) :
     # class constants
     wp_prefix = 'wp_'
     wp_user_password = None
-    wp_upload_path = None
+    wp_upload_path = "wp-content/uploads"
     devel_url = False
+    wp_url = None
 
     def handle(self, *args, **options):
         """WordPress to Cyclope DataBase Migration Logic."""
@@ -104,11 +105,11 @@ class Command(BaseCommand) :
             print "   temporary user passwords default to their username."
 
         # Articles <- wp_posts
-        wp_posts_a_count, articles_count = self._fetch_articles(cnx)
+        wp_posts_a_count, articles_count = self._fetch_articles(cnx, settings.site)
         print "-> migrated {} articles out of {} posts".format(articles_count, wp_posts_a_count)
 
         # StaticPages <- wp_posts
-        wp_posts_p_count, pages_count = self._fetch_pages(cnx)
+        wp_posts_p_count, pages_count = self._fetch_pages(cnx, settings.site)
         print "-> migrated {} static pages out of {} posts".format(pages_count, wp_posts_p_count)    
 
         # ExternalContent <- wp_links
@@ -196,12 +197,8 @@ class Command(BaseCommand) :
         cursor.execute(query)
         wp_options = dict(cursor.fetchall())
         cursor.close()
-        #see _clear_cyclope_db
-        #settings = SiteSettings()
         settings = SiteSettings.objects.all()[0]
-        #site = Site()
         site = settings.site
-        #
         settings.global_title = wp_options['blogname']
         settings.description = wp_options['blogdescription']
         #NOTE settings.keywords = WP doesn't use meta tags, only as a plugin
@@ -214,6 +211,8 @@ class Command(BaseCommand) :
             site.domain = wp_options['siteurl'].replace("http://","")
         else:
             site.domain = "localhost:8000"
+        #store wordpress url anyway in order to use it to replace links to uploads
+        self.wp_url = wp_options['siteurl'].replace("http://","")
         site.save()
         settings.site = site
         settings.save()
@@ -221,7 +220,7 @@ class Command(BaseCommand) :
         if wp_options['upload_path'] != '' : self.wp_upload_path = wp_options['upload_path']
         return settings
 
-    def _fetch_articles(self, mysql_cnx):
+    def _fetch_articles(self, mysql_cnx, site):
         """Queries the given fields to WP posts table selecting only posts, not pages nor attachments nor revisions,
            It parses data as key-value pairs to instance rows as Articles and save them.
            Returns the number of created Articles and of fetched rows in a tuple."""
@@ -233,7 +232,7 @@ class Command(BaseCommand) :
         transaction.enter_transaction_management()
         transaction.managed(True)
         for wp_post in cursor :
-            article = self._post_to_article(dict(zip(fields, wp_post)))
+            article = self._post_to_article(dict(zip(fields, wp_post)), site)
             article.save() 
         transaction.commit()
         transaction.leave_transaction_management()
@@ -241,7 +240,7 @@ class Command(BaseCommand) :
         cursor.close()
         return counts 
 
-    def _fetch_pages(self, mysql_cnx):
+    def _fetch_pages(self, mysql_cnx, site):
         """Queries to WP posts table selecting only pages, not posts nor attachments nor revisions."""
         fields = ('ID', 'post_title','post_status','post_date', 'post_modified',  'comment_status', 'post_content', 'post_excerpt', 'post_author')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"posts WHERE post_type='page'"
@@ -251,7 +250,7 @@ class Command(BaseCommand) :
         transaction.enter_transaction_management()
         transaction.managed(True)
         for wp_post in cursor :
-            page = self._post_to_static_page(dict(zip(fields, wp_post)))
+            page = self._post_to_static_page(dict(zip(fields, wp_post)), site)
             page.save()
         transaction.commit()
         transaction.leave_transaction_management()
@@ -406,24 +405,29 @@ class Command(BaseCommand) :
         else:
             return ContentType.objects.get(name='external content').id # links
 
+    #https://codex.wordpress.org/Determining_Plugin_and_Content_Directories
     def _parse_media_url(self, url):
-        #https://codex.wordpress.org/Determining_Plugin_and_Content_Directories
-        wp_dir = self.wp_upload_path if self.wp_upload_path else "wp-content/uploads"
-        cyc_dir = "uploads/" #TODO _settings.STATIC_URL?
-        return cyc_dir+url.split(wp_dir)[1]
+        return _settings.FILEBROWSER_DIRECTORY+url.split(self.wp_upload_path)[1]
+
+    def _parse_content_links(self, content, site):
+        old_upload_path = self.wp_url + '/' + self.wp_upload_path + '/'                        # www.numerica.cl/wp-content/uploads/
+        new_upload_path = site.domain +_settings.STATIC_URL +_settings.FILEBROWSER_DIRECTORY   # localhost:8000/media/uploads/
+        if old_upload_path in content:
+            content = content.replace(old_upload_path, new_upload_path)            
+        return content
 
     ###################
     #OBJECT CONVERSIONS
     
     #TODO 15+ Failed to populate slug Article.slug from name
     #TODO PRESERVE PERMALINKS
-    def _post_to_article(self, post):
+    def _post_to_article(self, post, site):
         """Instances an Article object from a WP post hash."""
         return Article(
             id = post['ID'],
             name = post['post_title'],
             #post_name is AutoSlug 
-            text = post['post_content'],
+            text = self._parse_content_links(post['post_content'], site),
             date = post['post_date'], #redundant
             creation_date = post['post_date'],
             modification_date = post['post_modified'],
@@ -439,11 +443,11 @@ class Command(BaseCommand) :
             show_author = 'USER' #default SITE doesn't work when site sets USER
         )
 
-    def _post_to_static_page(self, post):
+    def _post_to_static_page(self, post, site):
         return StaticPage(
             id = post['ID'],
             name = post['post_title'],
-            text = post['post_content'],
+            text = self._parse_content_links(post['post_content'], site),
             creation_date = post['post_date'],
             modification_date = post['post_modified'],
             published = post['post_status']=='publish',#private and draft are unpublished
@@ -544,7 +548,6 @@ class Command(BaseCommand) :
         )
         #rating, updated, rel, notes, rss will be lost
 
-    #TODO post_parent can be used for RelatedContents?
     def _post_to_attachment(self, post):
         #http://www.iana.org/assignments/media-types/media-types.xhtml#examples
         #top level media types : image, audio, video, application, multipart, text, example, message, model
