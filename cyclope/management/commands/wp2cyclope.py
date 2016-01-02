@@ -361,11 +361,14 @@ class Command(BaseCommand) :
             cursor.close()
             duplicates = [cat for cat in categories if cat.id in result]
             for dup in duplicates: categories.remove(dup)
-            duplicates = self._slugify_dup_categories(duplicates)
-            import pdb; pdb.set_trace()
+            #sort duplicate categories by name ignoring case
+            duplicates.sort(key = lambda cat: operator.attrgetter('name')(cat).lower(), reverse=False)
+            # categories can have the same name if they're different collections, but not the same slug
+            duplicates = self._dup_categories_slugs(duplicates)
+            # categories with thre same collection cannot have the same name
+            duplicates = self._dup_categories_collections(duplicates)
             categories += duplicates
-            Category.objects.bulk_create(categories)
-            
+            Category.objects.bulk_create(categories)   
         #Cyclope categorizations are WP term relationships
         fields = ('tr.object_id', 'tr.term_taxonomy_id', 'tt.term_id', 'tt.taxonomy', 'tr.term_order')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"term_taxonomy tt INNER JOIN "+self.wp_prefix+"term_relationships tr ON tr.term_taxonomy_id=tt.term_taxonomy_id"
@@ -420,21 +423,29 @@ class Command(BaseCommand) :
         else:
             return ContentType.objects.get(name='external content').id # links
 
-    def _slugify_dup_categories(self, categories):
-        #sort duplicate categories by name ignoring case
-        categories.sort(key = lambda cat: operator.attrgetter('name')(cat).lower(), reverse=False)
+    def _dup_categories_slugs(self, categories):
         #use a counter to differentiate them
         counter = 2
         for idx, category in enumerate(categories):
             if idx == 0 :
                 category.slug = slugify(category.name)
             else:
-                if categories[idx-1].name == category.name :
+                if categories[idx-1].name.lower() == category.name.lower() :
                     category.slug = slugify(category.name) + '-' + str(counter)
                     counter += 1
                 else:
                     counter = 2
                     category.slug = slugify(category.name)
+        return categories
+
+    def _dup_categories_collections(self, categories):
+        counter = 1
+        for idx, category in enumerate(categories):
+            if idx != 0 :
+                if categories[idx-1].name.lower() == category.name.lower() :
+                    if categories[idx-1].collection == category.collection :
+                        category.name = category.name + " (" + str(counter) + ")"
+                else : counter = 1
         return categories
 
     #https://codex.wordpress.org/Determining_Plugin_and_Content_Directories
