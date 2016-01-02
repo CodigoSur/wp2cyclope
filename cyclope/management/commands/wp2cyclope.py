@@ -13,6 +13,10 @@ from django.contrib.auth.models import User
 from cyclope.core.collections.models import Collection, Category, Categorization
 from cyclope.apps.medialibrary.models import ExternalContent, Picture, Document, RegularFile, BaseMedia, SoundTrack, MovieClip, FlashMovie
 from django.conf import settings as _settings
+from autoslug.settings import slugify
+from operator import attrgetter
+from django.db import IntegrityError
+import operator
 
 class Command(BaseCommand) :
     help = """Migrates a site in WordPress to Cyclope CMS.
@@ -104,6 +108,7 @@ class Command(BaseCommand) :
         else:
             print "   temporary user passwords default to their username."
 
+        print "-> starting contents migation..."
         # Articles <- wp_posts
         wp_posts_a_count, articles_count = self._fetch_articles(cnx, settings.site)
         print "-> migrated {} articles out of {} posts".format(articles_count, wp_posts_a_count)
@@ -228,7 +233,7 @@ class Command(BaseCommand) :
         transaction.managed(True)
         for wp_post in cursor :
             article = self._post_to_article(dict(zip(fields, wp_post)), site)
-            article.save() 
+            article.save()
         transaction.commit()
         transaction.leave_transaction_management()
         counts = (cursor.rowcount, Article.objects.count())
@@ -345,7 +350,22 @@ class Command(BaseCommand) :
             categories.append(self._wp_term_to_category(cat_hash,collection_ids))
         term_taxonomy_count = cursor.rowcount     
         cursor.close()
-        Category.objects.bulk_create(categories)
+    	#find duplicate names, since AutoSlugField doesn't properly preserve uniqueness in bulk.
+        try: #duplicate query is expesive, we try not to perform it if we can
+            Category.objects.bulk_create(categories)
+        except IntegrityError:
+            cursor = mysql_cnx.cursor()
+            query = "SELECT term_id FROM "+self.wp_prefix+"terms WHERE name IN (SELECT name FROM "+self.wp_prefix+"terms GROUP BY name HAVING COUNT(name) > 1)" #TODO can we speed it with a self join?
+            cursor.execute(query)
+            result = [x[0] for x in cursor.fetchall()]
+            cursor.close()
+            duplicates = [cat for cat in categories if cat.id in result]
+            for dup in duplicates: categories.remove(dup)
+            duplicates = self._slugify_dup_categories(duplicates)
+            import pdb; pdb.set_trace()
+            categories += duplicates
+            Category.objects.bulk_create(categories)
+            
         #Cyclope categorizations are WP term relationships
         fields = ('tr.object_id', 'tr.term_taxonomy_id', 'tt.term_id', 'tt.taxonomy', 'tr.term_order')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"term_taxonomy tt INNER JOIN "+self.wp_prefix+"term_relationships tr ON tr.term_taxonomy_id=tt.term_taxonomy_id"
@@ -399,6 +419,23 @@ class Command(BaseCommand) :
                     return item[0]
         else:
             return ContentType.objects.get(name='external content').id # links
+
+    def _slugify_dup_categories(self, categories):
+        #sort duplicate categories by name ignoring case
+        categories.sort(key = lambda cat: operator.attrgetter('name')(cat).lower(), reverse=False)
+        #use a counter to differentiate them
+        counter = 2
+        for idx, category in enumerate(categories):
+            if idx == 0 :
+                category.slug = slugify(category.name)
+            else:
+                if categories[idx-1].name == category.name :
+                    category.slug = slugify(category.name) + '-' + str(counter)
+                    counter += 1
+                else:
+                    counter = 2
+                    category.slug = slugify(category.name)
+        return categories
 
     #https://codex.wordpress.org/Determining_Plugin_and_Content_Directories
     def _parse_media_url(self, url):
@@ -536,7 +573,7 @@ class Command(BaseCommand) :
             name = link['link_name'],
             published = link['link_visible'] == 'Y',
             user_id = link['link_owner'],
-            #creation_date = ,#today?
+            #creation_date = ,#TODO today?
             modification_date = link['link_updated'],
             allow_comments = 'SITE', #if post['comment_status']!='closed' else 'NO',
             show_author = 'USER', #default SITE doesn't work when site sets
