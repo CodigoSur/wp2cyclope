@@ -155,12 +155,7 @@ class Command(BaseCommand) :
             cnx = mysql.connector.connect(**config)
             return cnx
         except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-                print "Wrong User name or Password."
-            elif err.errno == errorcode.ER_BAD_DB_ERROR:
-                print "Database doesn't exist."
-            else:
-                print err
+            print err
             raise
         else:
             return cnx
