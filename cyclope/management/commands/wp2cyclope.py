@@ -378,8 +378,8 @@ class Command(BaseCommand) :
         for term_relationship in cursor:
             categorizations.append(self._wp_term_relationship_to_categorization(dict(zip(fields, term_relationship)), object_type_ids))
         cursor.close()
+        categorizations = filter(lambda x: x is not None, categorizations) # clean None
         Categorization.objects.bulk_create(categorizations)                
-        #
         counts = (Collection.objects.count(), Category.objects.count(), term_taxonomy_count, len(categorizations))
         return counts
 
@@ -566,6 +566,7 @@ class Command(BaseCommand) :
 
     def _wp_term_relationship_to_categorization(self, term_relationship, object_type_ids):
         content_type_id = self._get_object_type(object_type_ids, term_relationship['tr.object_id'], term_relationship['tt.taxonomy'])
+        if content_type_id is None: return None # TODO this happens because there are categories for MENUs, develop them as Layouts
         return Categorization(
             category_id = term_relationship['tt.term_id'],
             content_type_id = content_type_id,
