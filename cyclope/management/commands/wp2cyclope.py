@@ -190,7 +190,6 @@ class Command(BaseCommand) :
     def _fetch_site_settings(self, mysql_cnx):
         """Execute single query to WP _options table to retrieve the given option names."""
         options = ('siteurl', 'blogname', 'blogdescription', 'home', 'default_comment_status', 'comment_moderation', 'comments_notify', 'upload_path')
-        #also could check comment_registration, users_can_register, blog_public
         #single query
         query = "SELECT option_name, option_value FROM "+self.wp_prefix+"options WHERE option_name IN {}".format(options)
         cursor = mysql_cnx.cursor()
@@ -517,12 +516,9 @@ class Command(BaseCommand) :
             comment = comment['comment_content'],
             submit_date = comment['comment_date'],
             ip_address = comment['comment_author_IP'],
-            ## WP referential integrity maintained, check why N's comments aren't all referenced
-            user_id = comment['user_id'] if comment['user_id']!=0 else None,
-            #is_public          comment_approved    TODO
-            #is_removed         ..
+            user_id = comment['user_id'] if comment['user_id']!=0 else None, # WP referential integrity maintained
             parent_id = comment_parent,
-            subscribe = True #TODO Site default?
+            subscribe = False #DB default
         )
 
     #https://docs.djangoproject.com/en/1.4/topics/auth/#fields
@@ -581,12 +577,11 @@ class Command(BaseCommand) :
             content_url = link['link_url'],
             description = link['link_description'],
             new_window = link['link_target'] == '_blank',
-            #TODO image = 'link_image'            
+            image = link['link_image'],          
             #base content            
             name = link['link_name'],
             published = link['link_visible'] == 'Y',
             user_id = link['link_owner'],
-            #creation_date = ,#TODO today?
             modification_date = link['link_updated'],
             allow_comments = 'SITE', #if post['comment_status']!='closed' else 'NO',
             show_author = 'USER', #default SITE doesn't work when site sets
@@ -614,7 +609,7 @@ class Command(BaseCommand) :
             else :
                 return self._wp_post_to_regular_file(post)
         elif top_level_mime == 'text':
-            return self._wp_post_to_document(post) #TODO difference between document & regular file?
+            return self._wp_post_to_document(post)
         else: #multipart, example, message, model
             return self._wp_post_to_regular_file(post)
 
