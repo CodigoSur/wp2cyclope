@@ -355,7 +355,7 @@ class Command(BaseCommand) :
             Category.objects.bulk_create(categories)
         except IntegrityError:
             cursor = mysql_cnx.cursor()
-            query = "SELECT term_id FROM "+self.wp_prefix+"terms WHERE name IN (SELECT name FROM "+self.wp_prefix+"terms GROUP BY name HAVING COUNT(name) > 1)" #TODO can we speed it with a self join?
+            query = "SELECT term_id FROM "+self.wp_prefix+"terms WHERE name IN (SELECT name FROM "+self.wp_prefix+"terms GROUP BY name HAVING COUNT(name) > 1)"
             cursor.execute(query)
             result = [x[0] for x in cursor.fetchall()]
             cursor.close()
@@ -365,10 +365,12 @@ class Command(BaseCommand) :
             duplicates.sort(key = lambda cat: operator.attrgetter('name')(cat).lower(), reverse=False)
             # categories can have the same name if they're different collections, but not the same slug
             duplicates = self._dup_categories_slugs(duplicates)
-            # categories with thre same collection cannot have the same name
+            # categories with the same collection cannot have the same name
             duplicates = self._dup_categories_collections(duplicates)
             categories += duplicates
-            Category.objects.bulk_create(categories)   
+            Category.objects.bulk_create(categories)
+        #set MPTT fields using django-mptt's own method
+        Category.tree.rebuild()
         #Cyclope categorizations are WP term relationships
         fields = ('tr.object_id', 'tr.term_taxonomy_id', 'tt.term_id', 'tt.taxonomy', 'tr.term_order')
         query = re.sub("[()']", '', "SELECT {} FROM ".format(fields))+self.wp_prefix+"term_taxonomy tt INNER JOIN "+self.wp_prefix+"term_relationships tr ON tr.term_taxonomy_id=tt.term_taxonomy_id"
@@ -555,12 +557,11 @@ class Command(BaseCommand) :
             name = term_taxonomy['t.name'],
             collection_id = collection_ids[term_taxonomy['tt.taxonomy']],
             description = term_taxonomy['tt.description'],
-            parent_id = term_taxonomy['tt.parent'] if term_taxonomy['tt.parent']!=0 else None,        
-            #TODO hierarchical categories should properly set tree values
+            parent_id = term_taxonomy['tt.parent'] if term_taxonomy['tt.parent']!=0 else None,
             #bulk creation fails if these are null
             lft=0,
             rght=0,
-            tree_id=term_taxonomy['t.term_id'],
+            tree_id=0,
             level=0
         )
 
