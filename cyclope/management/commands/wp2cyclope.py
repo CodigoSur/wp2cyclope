@@ -463,7 +463,6 @@ class Command(BaseCommand) :
     ###################
     #OBJECT CONVERSIONS
     
-    #TODO 15+ Failed to populate slug Article.slug from name
     #TODO PRESERVE PERMALINKS
     def _post_to_article(self, post, site):
         """Instances an Article object from a WP post hash."""
