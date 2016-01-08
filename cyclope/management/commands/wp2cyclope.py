@@ -139,7 +139,8 @@ class Command(BaseCommand) :
         print "-> migrated {} comments".format(comments_count)
 
         # Collections & Categories <- WP terms & term_taxonomies
-        collection_counts, category_count, wp_term_taxonomy_count, categorizations_count = self._fetch_term_taxonomies(cnx, object_type_ids)
+        categorizable_content_types = ('article',) # by default in WP just posts can be categorized or tagged, feature is available to pages and media as plugins
+        collection_counts, category_count, wp_term_taxonomy_count, categorizations_count = self._fetch_term_taxonomies(cnx, object_type_ids, categorizable_content_types)
         print "-> migrated {} collections and {} categories out of {} term taxonomies".format(collection_counts, category_count, wp_term_taxonomy_count)
         print "-> categorized {} articles, pages, links & attachments".format(categorizations_count)
 
@@ -320,7 +321,7 @@ class Command(BaseCommand) :
         cursor.close()
         return counts
 
-    def _fetch_term_taxonomies(self, mysql_cnx, object_type_ids):
+    def _fetch_term_taxonomies(self, mysql_cnx, object_type_ids, categorizable_content_types):
         """Creates a Collection from each of the taxonomies in the term_taxonomy table. (taxonomy is a column)
            Creates a Category for each Term. The relation with its collection is inferred from the taxonomy value.
            Creates Categorizations to link objects to its Categories reading the term_relationships table.
@@ -333,6 +334,14 @@ class Command(BaseCommand) :
             collection = self._wp_term_taxonomy_to_collection(taxonomy[0])
             collection.save()
         cursor.close()
+        #collections are used for articles only (but could be used for types comming from the posts table via plugins), except link categories which are for external content
+        categorizable_content_types = [ContentType.objects.get(model=content_type) for content_type in categorizable_content_types]
+        for collection in Collection.objects.exclude(name__contains="link"):
+            collection.content_types = categorizable_content_types
+            collection.save()
+        for collection in Collection.objects.filter(name__contains="link"):
+            collection.content_types = [ContentType.objects.get(name='external content')]
+            collection.save()
         #Cyclope categories are WP terms
         cursor = mysql_cnx.cursor()
         fields = ('t.term_id', 't.name', 'tt.taxonomy', 'tt.parent', 'tt.description')#preserve'slug'? even for articles...
@@ -543,7 +552,6 @@ class Command(BaseCommand) :
     def _wp_term_taxonomy_to_collection(self, taxonomy):
         return Collection(
             name = taxonomy,#everything else to defaults
-            #check content_types, default_list_views, view_options
         )
 
     def _wp_term_to_category(self, term_taxonomy, collection_ids):
