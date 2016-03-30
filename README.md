@@ -1,11 +1,20 @@
 # wp2cyclope
 _WordPress_ to **Cyclope** database migration script.
 
-wp2cyclope is part of [Cyclope](http://cyclope.codigosur.org/), a latino django-based CMS by [CódigoSur](http://www.codigosur.org/)
+**wp2cyclope** is part of [Cyclope](http://cyclope.codigosur.org/), a latino django-based CMS by [CódigoSur](http://www.codigosur.org/)
 
-it sits at *cyclope/management/commands/* as a custom [django-admin command](https://docs.djangoproject.com/en/1.4/howto/custom-management-commands/).
+it sits at **cyclope/management/commands/** as a custom [django-admin command](https://docs.djangoproject.com/en/1.4/howto/custom-management-commands/).
 
-working on *python v2.7 django v1.4.2 cyclope 3*
+working on **python v2.7 django v1.4.2 cyclope 3**
+
+- requires *mysql-connector-python*, install it in your env:
+```
+$numerico@pc:~$ pip install mysql-connector-python
+```
+- *if it's broken try downloading directly:*
+```
+$numerico@pc:~$ pip install https://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-2.1.3.tar.gz
+```
 
 **Usage: manage.py wp2cyclope [options]**
 
@@ -14,6 +23,7 @@ With cyclope's work environment active on a new project,
 numerico@pc:~$ source ~/cyclope_workenv/bin/activate
 $(cyclope_workenv)numerico@pc:~$ cyclopeproject numerica
 $(cyclope_workenv)numerico@pc:~$ cd numerica
+...
 ```
 run wp2cyclope as a django command
 ```
