@@ -9,11 +9,7 @@ working on **python v2.7 django v1.4.2 cyclope 3**
 
 - requires *mysql-connector-python*, install it in your env:
 ```
-$numerico@pc:~$ pip install mysql-connector-python
-```
-- *if it's broken try downloading directly:*
-```
-$numerico@pc:~$ pip install https://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-2.1.3.tar.gz
+$numerico@pc:~$ pip install https://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-2.1.5.tar.gz
 ```
 
 **Usage: manage.py wp2cyclope [options]**
